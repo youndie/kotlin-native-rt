@@ -10,8 +10,8 @@
 #                                              patches and not because of the packaging or the version.
 #
 # Runs on a Linux x86_64 host that has:
-#   - the STOCK distribution of that version in ~/.konan (a Gradle build on that version provisions it),
-#     with its dependencies (the dev LLVM bundle and the gcc toolchain the runtime is compiled with);
+#   - in ~/.konan/dependencies, the dev LLVM bundle and the gcc toolchain the runtime is compiled with
+#     (consumer-check with -Prt.llvmVariant=dev provisions both);
 #   - a clean checkout of JetBrains/kotlin at tag v<version> in $KOTLIN_SRC (default ~/kotlin-src);
 #     a sparse checkout of kotlin-native/runtime, kotlin-native/backend.native and kotlin-native/build-tools
 #     is enough.
@@ -24,12 +24,25 @@ N=${2:?rt number, e.g. 1}
 VER="$KV-yrt.$N"
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SRC=${KOTLIN_SRC:-$HOME/kotlin-src}
-STOCK=$HOME/.konan/kotlin-native-prebuilt-linux-x86_64-$KV
 SERIES=$ROOT/patches/kotlin-native/$KV
 WORK=${WORK:-$ROOT/build}
 OUT=$WORK/out/org/jetbrains/kotlin/kotlin-native-prebuilt/$VER
 
-[ -d "$STOCK" ] || { echo "no stock distribution at $STOCK"; exit 1; }
+# 0. THE STOCK DISTRIBUTION AS JETBRAINS PUBLISHED IT, from Maven Central and checked against its
+#    digest - not the unpacked copy in ~/.konan, which the Gradle plugin and the compiler have added to
+#    (klib/commonized, klib/cache, generated files in konan/nativelib, markers). Packaged from that
+#    copy, the tarball depended on the machine: 264 MB on one host, 210 MB on another.
+CENTRAL=${CENTRAL:-https://repo1.maven.org/maven2}
+URL=$CENTRAL/org/jetbrains/kotlin/kotlin-native-prebuilt/$KV/kotlin-native-prebuilt-$KV-linux-x86_64.tar.gz
+STGZ=$WORK/stock-$KV.tar.gz
+mkdir -p "$WORK"
+[ -f "$STGZ" ] || curl -sfL -o "$STGZ" "$URL"
+[ "$(sha1sum < "$STGZ" | cut -d' ' -f1)" = "$(curl -sfL "$URL.sha1")" ] || { echo "the stock tarball does not match its digest on Central"; rm -f "$STGZ"; exit 1; }
+rm -rf "$WORK/stock-dist" && mkdir -p "$WORK/stock-dist" && tar -xzf "$STGZ" -C "$WORK/stock-dist"
+STOCK=$WORK/stock-dist/kotlin-native-prebuilt-linux-x86_64-$KV
+[ -d "$STOCK" ] || { echo "the stock tarball has no $STOCK"; exit 1; }
+DEV=$(sed -n 's/^llvm.linux_x64.dev=//p' "$STOCK/konan/konan.properties")
+[ -d "$HOME/.konan/dependencies/$DEV" ] || { echo "no $DEV in ~/.konan/dependencies - provision it (README, Building)"; exit 1; }
 [ -f "$SERIES/series" ] || { echo "no patch series for $KV at $SERIES"; exit 1; }
 [ -z "$(git -C "$SRC" status --porcelain)" ] || { echo "$SRC is not clean"; exit 1; }
 want=$(git -C "$SRC" rev-parse "v$KV^{commit}") ; have=$(git -C "$SRC" rev-parse HEAD)
@@ -78,7 +91,10 @@ NAME=kotlin-native-prebuilt-linux-x86_64-$VER
 rm -rf "$WORK/dist" && mkdir -p "$WORK/dist" "$OUT"
 rsync -a --exclude klib/cache --exclude provisioned.ok "$STOCK/" "$WORK/dist/$NAME/"
 for m in $changed; do cp "$WORK/patched/$m.bc" "$WORK/dist/$NAME/konan/targets/linux_x64/native/$m.bc"; done
-tar -czf "$OUT/kotlin-native-prebuilt-$VER-linux-x86_64.tar.gz" -C "$WORK/dist" "$NAME"
+# A deterministic archive: sorted, zero mtimes and owners, normalised modes, gzip without a timestamp.
+# The same version built on two hosts is then the same bytes, which is checkable.
+tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --mode='u+rwX,go+rX,go-w' \
+  -cf - -C "$WORK/dist" "$NAME" | gzip -n > "$OUT/kotlin-native-prebuilt-$VER-linux-x86_64.tar.gz"
 
 # 4. A POM, because a Maven repository without one is not resolvable by default.
 cat > "$OUT/kotlin-native-prebuilt-$VER.pom" <<POM
@@ -93,4 +109,4 @@ cat > "$OUT/kotlin-native-prebuilt-$VER.pom" <<POM
 </project>
 POM
 ( cd "$OUT" && for f in *; do sha256sum "$f" > "$f.sha256"; done )
-echo "built $VER:"; ls -la "$OUT"
+echo "built $VER:"; ls -la "$OUT"; cat "$OUT/kotlin-native-prebuilt-$VER-linux-x86_64.tar.gz.sha256"

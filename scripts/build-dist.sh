@@ -3,6 +3,11 @@
 # Kotlin Gradle plugin resolves: org.jetbrains.kotlin:kotlin-native-prebuilt:<version>:linux-x86_64@tar.gz
 #
 #   scripts/build-dist.sh 2.4.20 1        ->  build/out/.../kotlin-native-prebuilt-2.4.20-yrt.1-linux-x86_64.tar.gz
+#   scripts/build-dist.sh 2.4.20 0        ->  the CONTROL: the stock runtime packaged the same way, never
+#                                              published. A consumer linked against it must come out byte
+#                                              for byte the same as against stock (consumer-check/run.sh),
+#                                              which is what shows a patched build differs because of the
+#                                              patches and not because of the packaging or the version.
 #
 # Runs on a Linux x86_64 host that has:
 #   - the STOCK distribution of that version in ~/.konan (a Gradle build on that version provisions it),
@@ -44,6 +49,11 @@ rebuild "$WORK/stock"
 grep -q '^identical [0-9]*, different 0,' "$WORK/stock.log" || { echo "CONTROL FAILED: the stock rebuild differs from the distribution"; exit 2; }
 
 # 2. The series, in order, then the rebuild; only the modules the series touches may differ.
+#    Number 0 is the control and skips this step: the stock modules are packaged unchanged.
+if [ "$N" = 0 ]; then
+changed=""
+echo "== control build: no patches applied"
+else
 echo "== patched: $(tr '\n' ' ' < "$SERIES/series")"
 while read -r p; do [ -n "$p" ] && git -C "$SRC" apply "$SERIES/$p"; done < "$SERIES/series"
 rebuild "$WORK/patched"
@@ -53,6 +63,7 @@ echo "modules that differ from stock: ${changed:-none}"
 [ -n "$changed" ] || { echo "the series changed no module - refusing to package a copy of stock"; exit 3; }
 expected=$(cat "$SERIES/modules" 2>/dev/null | sort | tr '\n' ' ')
 [ "$changed" = "$expected" ] || { echo "expected exactly: $expected"; exit 4; }
+fi
 
 # 3. The distribution: stock, minus what the compiler builds on demand from the runtime it has
 #    (klib/cache - those caches would carry the stock runtime) and the plugin's provisioning marker,

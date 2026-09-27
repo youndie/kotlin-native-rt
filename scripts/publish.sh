@@ -11,6 +11,7 @@
 set -euo pipefail
 
 VER=${1:?version, e.g. 2.4.20-yrt.1}
+case $VER in *-yrt.0) echo "yrt.0 is the unpatched control build and is never published"; exit 1 ;; esac
 BASE=${REPOSILITE_URL:-https://reposilite.kotlin.website/snapshots}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DIR=$ROOT/build/out/org/jetbrains/kotlin/kotlin-native-prebuilt/$VER

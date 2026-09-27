@@ -15,8 +15,9 @@ build**, and nothing here is sent upstream.
 **Status: draft.** `2.4.20-yrt.1` was built end to end on 2026-09-27 on a Linux x86_64 host: the
 control rebuilt all 24 shipped runtime modules byte for byte, the series changed `custom_alloc` alone
 (md5 `b8f9bc7d…`), and the tarball (264 MB) carries that module, no `klib/cache`, and
-`compilerVersion=2.4.20`. **Nothing is published**, and the open questions at the end decide whether
-a consumer can pick it up at all.
+`compilerVersion=2.4.20`. **The Kotlin Gradle plugin takes it** (`consumer-check`, below): it resolves
+`kotlin.native.version=2.4.20-yrt.1` from a Maven repository, unpacks it, links and runs, and the
+unpatched control links to the stock binary byte for byte. **Nothing is published.**
 
 ## What is patched
 
@@ -56,8 +57,10 @@ few milliseconds on the stock runtime and these patches do not move anything tha
 `2.4.20` in `~/.konan` or in Gradle's cache would pick either one silently.
 
 `konan.properties` keeps `compilerVersion=<kotlin>`: the compiler is JetBrains' and klibs record the
-compiler version. Whether the plugin accepts that next to `kotlin.native.version=<kotlin>-yrt.<n>` is
-open question 1.
+compiler version. The plugin accepts that next to `kotlin.native.version=<kotlin>-yrt.<n>`.
+
+**`yrt.0` is reserved for the control**: `scripts/build-dist.sh <kotlin> 0` packages the stock runtime
+exactly as a patched build is packaged, and `scripts/publish.sh` refuses it.
 
 ## Building
 
@@ -79,9 +82,30 @@ KOTLIN_SRC=~/kotlin-src scripts/build-dist.sh 2.4.20 1
    are swapped in; the top directory is named as the plugin names it on disk; a tarball, a POM and
    digests go to `build/out` in Maven layout.
 
+## Checking that a consumer gets it
+
+`consumer-check/` is the smallest consumer: one program that fills the heap across size classes and
+collects, a Kotlin Multiplatform build with no other dependency, and a repository filter that admits
+only `-yrt` versions of `kotlin-native-prebuilt`. `run.sh` links it against stock and against a
+version from the given repository and compares:
+
+```bash
+consumer-check/run.sh 2.4.20 2.4.20-yrt.1 file://$PWD/build/out   # must differ from stock
+consumer-check/run.sh 2.4.20 2.4.20-yrt.0 file://$PWD/build/out   # must not
+```
+
+Both halves are needed. The patched binary differing from stock proves nothing on its own - the
+packaging or the version string could change it; the control coming out identical is what shows the
+difference is the runtime. The allocator's functions are inlined into the GC thread in a release
+binary, so there is no symbol to look for instead.
+
+On 2026-09-27: stock `72d58837`, `2.4.20-yrt.1` `03039fc1`, `2.4.20-yrt.0` `72d58837`; all three ran.
+The plugin unpacked each into `~/.konan/kotlin-native-prebuilt-linux-x86_64-<version>`.
+
 ## Acceptance before a version is published
 
-- the build's control and module check (above);
+- the build's control and module check (above), and `consumer-check` against the patched build and
+  its `yrt.0` control;
 - JetBrains' runtime tests for the custom allocator (`CustomAllocatorTest`, the `PageStore` tests) —
   **not run yet**; the patches' safety rests on the argument in 0002 and on an assertions-on smoke
   (`-Xbinary=runtimeAssertionsMode=panic`) per build;
@@ -109,9 +133,10 @@ this repository.
 
 ## Open questions
 
-1. Does the plugin accept `kotlin.native.version` with a suffix, and a distribution whose
-   `compilerVersion` is the plain `<kotlin>`? Everything else depends on it.
-2. Is the tarball's top directory name what the plugin expects when it unpacks into `~/.konan`?
+1. ~~Does the plugin accept a suffixed `kotlin.native.version` with `compilerVersion=<kotlin>`?~~
+   Yes (`consumer-check`, 2026-09-27).
+2. ~~Is the tarball's top directory what the plugin expects?~~ Yes: it unpacked into the directory it
+   names and linked from it.
 3. Does a debug or test binary take the runtime from somewhere other than `konan/targets/*/native`
    (a cache built on the consumer's machine is built from this distribution, so it should be fine)?
 4. Where does the publishing run: GitHub Actions do not start on a private repository here, and the

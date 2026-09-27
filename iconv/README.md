@@ -45,8 +45,12 @@ A dependency of the executable's `linuxX64Main`; the klib carries both the compi
 linker options, so nothing else is configured:
 
 ```kotlin
-implementation("io.github.youndie.kotlin-native-rt:iconv-unicode:<version>")
+implementation("io.github.youndie.kotlin-native-rt:iconv-unicode:0.1.0")
 ```
+
+from `https://reposilite.kotlin.website/snapshots` (`includeGroup("io.github.youndie.kotlin-native-rt")`).
+0.1.0 was published on 2026-09-27; an `iconv-v<version>` tag publishes, and CI then runs
+`check/check.sh` against the published coordinate before calling it done.
 
 For a static executable that is the whole story, together with `0003-static-executable` from this
 repository ([`check/`](check/) is a complete consumer). It works in a dynamically linked executable

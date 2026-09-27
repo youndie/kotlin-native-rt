@@ -41,11 +41,25 @@ few milliseconds on the stock runtime and these patches do not move anything tha
 
 ## Planned, not here yet
 
-- **Static linking without overrides** — the five `konan.properties` values that let `-static`
-  produce a binary for a `FROM scratch` image, written into this distribution's own file instead of
-  passed as `-Xoverride-konan-properties` (which JetBrains calls unstable between patch releases).
-  Tracked upstream as [KT-89362](https://youtrack.jetbrains.com/issue/KT-89362); the recipe is in
-  sborka's `docs/research/static-probe`.
+- **`-static` that links a static executable** ([KT-89362](https://youtrack.jetbrains.com/issue/KT-89362)).
+  Two halves. The compiler's `GccBasedLinker` emits `-dynamic-linker` unconditionally, so a
+  `-static` binary still carries `PT_INTERP` and segfaults at start; the fix is
+  [JetBrains/kotlin#8127](https://github.com/JetBrains/kotlin/pull/8127) (closed unmerged), 16 lines
+  in `native/utils/.../Linker.kt` with a test. And `linkerKonanFlags.linux_x64` carries a hardcoded
+  `-Bdynamic` after the user's flags, which is a `konan.properties` line in this distribution. **This
+  one is not a runtime patch**: `Linker.kt` is compiled into the compiler's jar, so the build has to
+  recompile those classes and replace them in `konan/lib`, and the control becomes "the stock
+  `Linker.kt`, recompiled and swapped in the same way, links a consumer to the stock binary". The
+  recipe and the measurements are in sborka's `docs/research/static-probe`.
+- **Resident memory that follows the thread count** ([KT-89365](https://youtrack.jetbrains.com/issue/KT-89365)):
+  RSS = 7 MB + 2.96 MB x threads at the default page size, because every thread keeps a page per size
+  class it has touched until the next collection. JetBrains closed it as a duplicate of
+  [KT-74834](https://youtrack.jetbrains.com/issue/KT-74834) (how many empty pages to keep) and
+  pointed at [KT-89435](https://youtrack.jetbrains.com/issue/KT-89435) (fewer size classes); both are
+  open. `fixedBlockPageSize=16` is the workaround for the size, not the policy. Candidates for a patch,
+  none tried: map fixed-block pages without `MAP_POPULATE`, so a thread's partly used page is resident
+  only as far as it was touched; merge neighbouring size classes; give a thread's pages back when it
+  parks. The measurement that decides is the slope of peak RSS against thread count.
 - **`ktor-io` with UTF-8 outside iconv** — a separate artifact with its own version line, because it
   follows Ktor's releases, not Kotlin's. On Kotlin/Native the charset layer is glibc `iconv`, which
   `dlopen`s gconv modules even for UTF-8, so a `scratch` image fails the first URL encoding.

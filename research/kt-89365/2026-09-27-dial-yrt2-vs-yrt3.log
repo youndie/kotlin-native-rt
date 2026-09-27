@@ -1,0 +1,21 @@
+## L=128000000 threads=100 rate=100 (stock = 2.4.20-yrt.2, patched = 2.4.20-yrt.3 = yrt.2 + 0004)
+# stock 1b8ebfbc, patched 6fa0b8a2; args: --L=128000000 --node-bytes=720 --chunk-bytes=16 --s=12 --m=8 --threads=100 --size-mix=24:31238,32:2089,40:2044,48:1072,56:563,64:279,72:124,80:259,88:427,96:327,104:125,112:109,120:54,128:50,136:1,144:53,152:58,160:2,168:51,176:1,184:1,192:2,200:3,208:1,224:102,232:2,240:1,248:1,272:1,280:52,288:1,312:50,328:2,344:2,416:1,432:50,448:50,464:1,512:1,536:3,600:50,608:1,872:50,1080:100,1656:50,8216:2,14280:1,14328:1,28528:1,28624:1 --port=18401; 100 req/s for 150s; 20 cores
+# round 1
+stock    collections 161  pause#1 p99   0.50  pause#2 p50   0.09 p99   0.26 max   0.29 ms  threads 138 rss 386 MB  requests 15001  cpu   3261 us/req  latency med=2.78ms p(99)=5.84ms max=12.35ms
+patched  collections 159  pause#1 p99   0.58  pause#2 p50   0.09 p99   0.23 max   0.24 ms  threads 151 rss 374 MB  requests 15001  cpu   3742 us/req  latency med=2.97ms p(99)=5.94ms max=41.23ms
+# round 2
+stock    collections 159  pause#1 p99   0.58  pause#2 p50   0.09 p99   0.23 max   0.26 ms  threads 162 rss 393 MB  requests 15001  cpu   3759 us/req  latency med=3ms    p(99)=5.17ms max=17.86ms
+patched  collections 158  pause#1 p99   0.52  pause#2 p50   0.10 p99   0.31 max   0.47 ms  threads 145 rss 368 MB  requests 15000  cpu   3861 us/req  latency med=3.25ms p(99)=5.57ms max=23.86ms
+# round 3
+stock    collections 158  pause#1 p99   0.55  pause#2 p50   0.08 p99   0.24 max   0.26 ms  threads 144 rss 400 MB  requests 15001  cpu   3488 us/req  latency med=2.58ms p(99)=5.66ms max=33.86ms
+patched  collections 157  pause#1 p99   0.65  pause#2 p50   0.10 p99   0.27 max   0.34 ms  threads 128 rss 374 MB  requests 15001  cpu   3856 us/req  latency med=2.98ms p(99)=5.05ms max=21.54ms
+## L=128000000 threads=100 rate=200 (stock = 2.4.20-yrt.2, patched = 2.4.20-yrt.3 = yrt.2 + 0004)
+# stock 1b8ebfbc, patched 6fa0b8a2; args: --L=128000000 --node-bytes=720 --chunk-bytes=16 --s=12 --m=8 --threads=100 --size-mix=24:31238,32:2089,40:2044,48:1072,56:563,64:279,72:124,80:259,88:427,96:327,104:125,112:109,120:54,128:50,136:1,144:53,152:58,160:2,168:51,176:1,184:1,192:2,200:3,208:1,224:102,232:2,240:1,248:1,272:1,280:52,288:1,312:50,328:2,344:2,416:1,432:50,448:50,464:1,512:1,536:3,600:50,608:1,872:50,1080:100,1656:50,8216:2,14280:1,14328:1,28528:1,28624:1 --port=18401; 200 req/s for 150s; 20 cores
+# round 1
+stock    collections 283  pause#1 p99   0.58  pause#2 p50   0.10 p99   0.31 max   0.43 ms  threads 135 rss 422 MB  requests 30001  cpu   3202 us/req  latency med=2.55ms p(99)=5.16ms max=48.59ms
+patched  collections 280  pause#1 p99   0.55  pause#2 p50   0.11 p99   0.27 max   0.41 ms  threads 138 rss 401 MB  requests 30001  cpu   3090 us/req  latency med=2.39ms p(99)=5.38ms max=49.4ms
+# round 2
+stock    collections 283  pause#1 p99   0.53  pause#2 p50   0.09 p99   0.29 max   0.34 ms  threads 149 rss 430 MB  requests 30001  cpu   3061 us/req  latency med=2.43ms p(99)=4.93ms max=48.66ms
+
+# NOTE appended 2026-09-27: stopped during the second point on the owner's call - after yrt.1 the differences left are noise.
+# The rows above are what ran; the 200 req/s point has one full round and part of a second, the 1 GB point did not run.

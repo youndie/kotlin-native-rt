@@ -1,0 +1,29 @@
+# KT-89365 in isolation: research/kt-89365/threads-rss, N threads each touching 22 fixed-block size classes with one object, VmRSS before and after (no collection in between). Kotlin 2.4.20, WSL host.
+# arms: stock (128 KiB pages, MAP_POPULATE), stock with fixedBlockPageSize=16, stock runtime rebuilt without MAP_POPULATE (custom_alloc c8d9a3ef)
+# 27773bb90993c56fd56e0bbdf57161e9  rss-nopop-p128.kexe
+# a5b53bd636c6594613fee3b5fd612c74  rss-stock-p128.kexe
+# 88ca8704709c9b7163bccb5cf267ae63  rss-stock-p16.kexe
+stock-p128  run 1  threads 1 classes 22 rss_before_kib 3040 rss_after_kib 6720 delta_per_thread_kib 3680
+stock-p128  run 1  threads 25 classes 22 rss_before_kib 3040 rss_after_kib 73280 delta_per_thread_kib 2809
+stock-p128  run 1  threads 50 classes 22 rss_before_kib 3040 rss_after_kib 144320 delta_per_thread_kib 2825
+stock-p128  run 1  threads 100 classes 22 rss_before_kib 3040 rss_after_kib 285920 delta_per_thread_kib 2828
+stock-p16   run 1  threads 1 classes 22 rss_before_kib 2560 rss_after_kib 3040 delta_per_thread_kib 480
+stock-p16   run 1  threads 25 classes 22 rss_before_kib 2560 rss_after_kib 10880 delta_per_thread_kib 332
+stock-p16   run 1  threads 50 classes 22 rss_before_kib 2560 rss_after_kib 19360 delta_per_thread_kib 336
+stock-p16   run 1  threads 100 classes 22 rss_before_kib 2560 rss_after_kib 38240 delta_per_thread_kib 356
+nopop-p128  run 1  threads 1 classes 22 rss_before_kib 2560 rss_after_kib 2560 delta_per_thread_kib 0
+nopop-p128  run 1  threads 25 classes 22 rss_before_kib 2560 rss_after_kib 3520 delta_per_thread_kib 38
+nopop-p128  run 1  threads 50 classes 22 rss_before_kib 2560 rss_after_kib 6080 delta_per_thread_kib 70
+nopop-p128  run 1  threads 100 classes 22 rss_before_kib 2560 rss_after_kib 11520 delta_per_thread_kib 89
+stock-p128  run 2  threads 1 classes 22 rss_before_kib 3040 rss_after_kib 6720 delta_per_thread_kib 3680
+stock-p128  run 2  threads 25 classes 22 rss_before_kib 3040 rss_after_kib 72960 delta_per_thread_kib 2796
+stock-p128  run 2  threads 50 classes 22 rss_before_kib 3040 rss_after_kib 144320 delta_per_thread_kib 2825
+stock-p128  run 2  threads 100 classes 22 rss_before_kib 3040 rss_after_kib 285760 delta_per_thread_kib 2827
+stock-p16   run 2  threads 1 classes 22 rss_before_kib 2560 rss_after_kib 3040 delta_per_thread_kib 480
+stock-p16   run 2  threads 25 classes 22 rss_before_kib 2560 rss_after_kib 10560 delta_per_thread_kib 320
+stock-p16   run 2  threads 50 classes 22 rss_before_kib 2560 rss_after_kib 19200 delta_per_thread_kib 332
+stock-p16   run 2  threads 100 classes 22 rss_before_kib 2560 rss_after_kib 38080 delta_per_thread_kib 355
+nopop-p128  run 2  threads 1 classes 22 rss_before_kib 2560 rss_after_kib 2560 delta_per_thread_kib 0
+nopop-p128  run 2  threads 25 classes 22 rss_before_kib 2560 rss_after_kib 3520 delta_per_thread_kib 38
+nopop-p128  run 2  threads 50 classes 22 rss_before_kib 2560 rss_after_kib 6400 delta_per_thread_kib 76
+nopop-p128  run 2  threads 100 classes 22 rss_before_kib 2560 rss_after_kib 11520 delta_per_thread_kib 89

@@ -44,15 +44,10 @@ few milliseconds on the stock runtime and these patches do not move anything tha
 
 ## Planned, not here yet
 
-- **Resident memory that follows the thread count** ([KT-89365](https://youtrack.jetbrains.com/issue/KT-89365)):
-  RSS = 7 MB + 2.96 MB x threads at the default page size, because every thread keeps a page per size
-  class it has touched until the next collection. JetBrains closed it as a duplicate of
-  [KT-74834](https://youtrack.jetbrains.com/issue/KT-74834) (how many empty pages to keep) and
-  pointed at [KT-89435](https://youtrack.jetbrains.com/issue/KT-89435) (fewer size classes); both are
-  open. `fixedBlockPageSize=16` is the workaround for the size, not the policy. Candidates for a patch,
-  none tried: map fixed-block pages without `MAP_POPULATE`, so a thread's partly used page is resident
-  only as far as it was touched; merge neighbouring size classes; give a thread's pages back when it
-  parks. The measurement that decides is the slope of peak RSS against thread count.
+- **Resident memory that follows the thread count** ([KT-89365](https://youtrack.jetbrains.com/issue/KT-89365))
+  was examined and is not patched: see [`research/kt-89365`](research/kt-89365/). The mechanism is
+  reproduced (2.83 MB a thread, pages populated in full); dropping `MAP_POPULATE` fixes it in isolation,
+  but a service already on 16 KiB pages gains about 5 % of memory from it.
 - **`ktor-io` with UTF-8 outside iconv** — a separate artifact with its own version line, because it
   follows Ktor's releases, not Kotlin's. On Kotlin/Native the charset layer is glibc `iconv`, which
   `dlopen`s gconv modules even for UTF-8, so a `scratch` image fails the first URL encoding.

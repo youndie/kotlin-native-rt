@@ -1,0 +1,16 @@
+diff -ruN a/kotlin-native/runtime/src/alloc/custom/cpp/GCApi.cpp b/kotlin-native/runtime/src/alloc/custom/cpp/GCApi.cpp
+--- a/kotlin-native/runtime/src/alloc/custom/cpp/GCApi.cpp
++++ b/kotlin-native/runtime/src/alloc/custom/cpp/GCApi.cpp
+@@ -120,7 +120,11 @@
+ #if KONAN_WINDOWS
+         RuntimeFail("mmap is not available on mingw");
+ #elif KONAN_LINUX
+-        memory = mmap(nullptr, size, PROT_WRITE | PROT_READ, MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE | MAP_POPULATE, -1, 0);
++        // No MAP_POPULATE: a page is resident only as far as it has been touched. Every thread holds a
++        // page per size class it allocates in until the next collection, and a populated page is
++        // resident in full however little of it is used - 22 classes x 128 KiB is ~2.8 MB per thread,
++        // which is how a service with a hundred pool threads holds hundreds of megabytes (KT-89365).
++        memory = mmap(nullptr, size, PROT_WRITE | PROT_READ, MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0);
+         error = memory == MAP_FAILED;
+ #elif KONAN_APPLE
+         auto tag = compiler::mmapTag();

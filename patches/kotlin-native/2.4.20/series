@@ -1,3 +1,4 @@
 0001-restore-page-list-transfer-order.patch
 0002-free-empty-pages-after-resume.patch
 0003-static-executable.patch
+0004-lazy-allocator-pages.patch

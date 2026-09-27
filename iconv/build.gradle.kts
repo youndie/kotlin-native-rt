@@ -53,3 +53,17 @@ kotlin {
 }
 
 tasks.matching { it.name == "cinteropIconvUnicodeLinuxX64" }.configureEach { dependsOn(generateDef, compileC) }
+
+// Published by CI on an `iconv-v<version>` tag (.github/workflows/iconv.yml), to the same reposilite
+// repository as the distribution; the token's route covers this group.
+publishing {
+    repositories {
+        maven("https://reposilite.kotlin.website/snapshots") {
+            name = "reposilite"
+            credentials {
+                username = providers.environmentVariable("REPOSILITE_USER").orNull
+                password = providers.environmentVariable("REPOSILITE_SECRET").orNull
+            }
+        }
+    }
+}

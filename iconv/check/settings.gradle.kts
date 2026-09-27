@@ -1,5 +1,6 @@
 // The consumer iconv-unicode exists for: ktor-io in a statically linked executable. -Piconv=true adds
-// the library (from the build one directory up); without it this is the control, which must fail.
+// the library - built one directory up, or the published one with -Piconv.version; without it this
+// is the control, which must fail.
 pluginManagement {
     repositories {
         gradlePluginPortal()
@@ -17,10 +18,15 @@ dependencyResolutionManagement {
                 }
             }
         }
+        // -Piconv.version=<v>: the published library instead of the build one directory up
+        maven("https://reposilite.kotlin.website/snapshots") {
+            name = "iconv-unicode"
+            mavenContent { includeGroup("io.github.youndie.kotlin-native-rt") }
+        }
         mavenCentral()
     }
 }
 
-includeBuild("..")
+if (providers.gradleProperty("iconv.version").orNull == null) includeBuild("..")
 
 rootProject.name = "iconv-check"

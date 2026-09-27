@@ -3,6 +3,7 @@
 # work and the rest fail as before; without it (the control) all of them fail. Linux x86_64, docker.
 #
 #     check/check.sh [kotlin-native-version]      (default 2.4.20-yrt.2; needs 0003-static-executable)
+#     ICONV_VERSION=0.1.0 check/check.sh           the published library instead of the local build
 set -euo pipefail
 cd "$(dirname "$0")"
 KNV=${1:-2.4.20-yrt.2}
@@ -10,6 +11,7 @@ REPO=${RT_REPO:-https://reposilite.kotlin.website/snapshots}
 
 for v in control iconv; do
   flag=(); [ "$v" = iconv ] && flag=(-Piconv=true)
+  [ -n "${ICONV_VERSION:-}" ] && flag+=(-Piconv.version="$ICONV_VERSION")
   ./gradlew -q --console=plain linkReleaseExecutableLinuxX64 \
     -Pkotlin.native.version="$KNV" -Prt.repo="$REPO" "${flag[@]}"
   cp build/bin/linuxX64/releaseExecutable/iconv-check.kexe "build/probe-$v"

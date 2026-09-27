@@ -1,10 +1,13 @@
 # iconv-unicode: the replacement against glibc, and a static ktor-io executable in an empty image.
 # ktor-io's own suite (iconv/test/ktor-io-suite.sh) builds Ktor and is run by hand.
+#
+#   git tag iconv-v0.1.0 && git push origin iconv-v0.1.0     checks, publishes, checks the published one
 name: iconv
 
 on:
   push:
     branches: [main]
+    tags: ['iconv-v*']
   pull_request:
   workflow_dispatch:
 
@@ -29,3 +32,30 @@ jobs:
 
       - name: A static ktor-io executable in an empty image, with and without the library
         run: iconv/check/check.sh
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/iconv-v')
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Publish
+        env:
+          REPOSILITE_USER: ${{ secrets.REPOSILITE_USER }}
+          REPOSILITE_SECRET: ${{ secrets.REPOSILITE_SECRET }}
+        run: |
+          set -euo pipefail
+          V=${GITHUB_REF_NAME#iconv-v}
+          echo "V=$V" >> "$GITHUB_ENV"
+          iconv/gradlew -p iconv --no-daemon -q publishAllPublicationsToReposiliteRepository -Piconv.version="$V"
+
+      # the same check, through the published coordinate and nothing local
+      - name: The published library, in an empty image
+        run: ICONV_VERSION=$V iconv/check/check.sh

@@ -21,7 +21,8 @@ kotlin {
         linuxX64Main.dependencies {
             implementation("io.ktor:ktor-io:3.5.2")
             if (providers.gradleProperty("iconv").orNull.toBoolean()) {
-                implementation("io.github.youndie.kotlin-native-rt:iconv-unicode")
+                implementation("io.github.youndie.kotlin-native-rt:iconv-unicode" +
+                    (providers.gradleProperty("iconv.version").orNull?.let { ":$it" } ?: ""))
             }
         }
     }

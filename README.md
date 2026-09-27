@@ -1,181 +1,97 @@
 # kotlin-native-rt
 
-A patched Kotlin/Native distribution for `linux-x86_64`, published to our own reposilite under the
-coordinate the Kotlin Gradle plugin already resolves:
+A patched Kotlin/Native distribution for `linux-x86_64`, published to our reposilite under the
+coordinate the Kotlin Gradle plugin already resolves, so a service takes it with one property:
 
 ```
 org.jetbrains.kotlin:kotlin-native-prebuilt:<kotlin>-yrt.<n>:linux-x86_64@tar.gz
 ```
 
-The standard library, the platform libraries and almost all of the compiler are JetBrains' own, byte
-for byte. What differs is a small patch series, kept here as files so each change can be read on its
-own: the runtime's allocator (`custom_alloc`), and one compiler source, `Linker.kt`, whose classes are
-recompiled with the kotlinc of the same release and swapped into `konan/lib`. This is **not a JetBrains
-build**, and nothing here is sent upstream.
-
-**Status: draft.** `2.4.20-yrt.1` was built end to end on 2026-09-27 on a Linux x86_64 host: the
-control rebuilt all 24 shipped runtime modules byte for byte, the series changed `custom_alloc` alone
-(md5 `b8f9bc7d…`), and the tarball (264 MB) carries that module, no `klib/cache`, and
-`compilerVersion=2.4.20`. The tarball is built from JetBrains' own on Maven Central and is
-reproducible: CI and a local host produced the same bytes. **The Kotlin Gradle plugin takes it** (`consumer-check`, below): it resolves
-`kotlin.native.version=2.4.20-yrt.1` from a Maven repository, unpacks it, links and runs, and the
-unpatched control links to the stock binary byte for byte. **Nothing is published.**
-
-## What is patched
-
-`patches/kotlin-native/<kotlin>/series` lists the patches in order; `modules` lists the runtime modules
-the series is expected to change, and the build refuses to package if any other module differs.
-
-| patch | what it changes | why |
-|---|---|---|
-| `0001-restore-page-list-transfer-order` | the order of the two page-list merges in `PageStore::PrepareForGC` | At the end of marking, with the world stopped, the second merge walks its source list to the tail. [`ec891474b0`](https://github.com/JetBrains/kotlin/commit/ec891474b0) (January 2023) put the long list (`used_`) first so the short one is walked; [`7854b01473`](https://github.com/JetBrains/kotlin/commit/7854b01473) two weeks later reversed the lines without comment. 2.4.20 walks the long list in every cycle. |
-| `0002-free-empty-pages-after-resume` | empty pages are detached in the pause (one CAS) and unmapped by the GC thread when the sweep starts, after the world resumes | Freeing inside the pause is how the runtime stays safe with lock-free page stacks ([`AtomicStack.hpp`](https://github.com/JetBrains/kotlin/blob/v2.4.20/kotlin-native/runtime/src/alloc/custom/cpp/AtomicStack.hpp)); detaching the whole list keeps that safety - no mutator can reach a detached page, and none is inside `Pop` at a safepoint - and moves one `munmap` per page out of the pause. |
-| `0003-static-executable` | the compiler's `GccBasedLinker`: with `-static` among the user's linker options it emits no `-dynamic-linker`, drops `-Bdynamic` from `linkerKonanFlags`, and asks for `sched_yield` by name | `-static` is undone twice on stock ([KT-89362](https://youtrack.jetbrains.com/issue/KT-89362)): an interpreter is emitted unconditionally, and `-Bdynamic` after the user's flags switches every library behind it, `-lc` included, back to shared. The first two changes are [JetBrains/kotlin#8127](https://github.com/JetBrains/kotlin/pull/8127) (closed unmerged) and the `-Bdynamic` half of the same ticket. The third was found here: libstdc++ reaches `sched_yield` only through a weak reference, which does not pull it out of a static libc, so a static binary that nothing else links it into calls address zero the first time the collector waits for a concurrent sweeper. |
-
-**What the two buy**, measured on a synthetic Ktor service with a 1 GB live heap and 100 allocating
-threads, 16 KiB pages, CMS, one process on a four-core host, end-of-marking pause at p99: 23–52 ms
-stock, 0.9–4.5 ms with both. Each alone fixes only its half (0001 the median, 0002 the tail). Request
-latency and CPU per request did not get worse at 100 req/s, and at 90 % of capacity 0002 removed
-latency spikes of hundreds of milliseconds. The pause mechanism with its controls, on an independent
-subject, is in [`youndie/kesh` `bench/reports/b-19`](https://github.com/youndie/kesh/tree/main/bench/reports/b-19).
-
-**Only services with a large heap gain anything.** Up to a live heap of about 128 MB the pause is a
-few milliseconds on the stock runtime and these patches do not move anything that matters.
-
-## Planned, not here yet
-
-- **Resident memory that follows the thread count** ([KT-89365](https://youtrack.jetbrains.com/issue/KT-89365))
-  was examined and is not patched: see [`research/kt-89365`](research/kt-89365/). The mechanism is
-  reproduced (2.83 MB a thread, pages populated in full); dropping `MAP_POPULATE` fixes it in isolation,
-  but a service already on 16 KiB pages gains about 5 % of memory from it.
-- **`ktor-io` with UTF-8 outside iconv** — a separate artifact with its own version line, because it
-  follows Ktor's releases, not Kotlin's. On Kotlin/Native the charset layer is glibc `iconv`, which
-  `dlopen`s gconv modules even for UTF-8, so a `scratch` image fails the first URL encoding.
-
-**0003 on 2.4.20-yrt.2, 2026-09-27** (`consumer-check/static.sh`): with `-linker-option -static`
-and the host's glibc, stock produces a binary with an interpreter and three shared libraries;
-`2.4.20-yrt.2` produces one with neither, `sched_yield` defined, which collects and runs - also in an
-empty `FROM scratch` image (538 KB). Without `-static` the consumer links to the same binary as on
-`yrt.1` (`03039fc1`), so 0003 changes nothing for an ordinary link. Found on the way: the recipe the
-static services use by hand (`--no-dynamic-linker` plus `linkerKonanFlags` without `-Bdynamic`) gives
-byte for byte the binary 0003 gives without the `sched_yield` line - and that binary crashes in the
-collector. The services that ship it today link `sched_yield` in through something else.
+The standard library, the platform libraries and nearly all of the compiler are JetBrains' own, byte
+for byte. What differs is a short patch series, kept as files in
+[`patches/kotlin-native/<kotlin>/`](patches/kotlin-native/): the runtime's allocator, and one compiler
+source. This is **not a JetBrains build**, and nothing here is sent upstream.
 
 ## Versions
 
-`<kotlin>-yrt.<n>`: `2.4.20-yrt.1`, `2.4.20-yrt.2`, ... A number is never reused (reposilite answers
-409), and the stock version string is never published here: a machine that already holds the stock
-`2.4.20` in `~/.konan` or in Gradle's cache would pick either one silently.
-
-`konan.properties` keeps `compilerVersion=<kotlin>`: the compiler is JetBrains' and klibs record the
-compiler version. The plugin accepts that next to `kotlin.native.version=<kotlin>-yrt.<n>`.
-
-**`yrt.0` is reserved for the control**: `scripts/build-dist.sh <kotlin> 0` packages the stock runtime
-exactly as a patched build is packaged - with the compiler sources the series touches recompiled
-unchanged - and `scripts/publish.sh` refuses it.
-
-| version | series | published |
+| version | patches | published |
 |---|---|---|
 | `2.4.20-yrt.1` | 0001, 0002 | 2026-09-27 |
-| `2.4.20-yrt.2` | 0001, 0002, 0003 | 2026-09-27 |
+| **`2.4.20-yrt.2`** | 0001, 0002, 0003 | 2026-09-27 |
 
-## Building
+A number is never reused, and the stock version string is never published here.
 
-On a Linux x86_64 host with the stock distribution of that version in `~/.konan` and a clean checkout
-of `JetBrains/kotlin` at `v<kotlin>` (a sparse checkout of `kotlin-native/runtime`,
-`kotlin-native/backend.native` and `kotlin-native/build-tools` is enough):
+## What the patches do
 
-```bash
-KOTLIN_SRC=~/kotlin-src scripts/build-dist.sh 2.4.20 1
-```
+| patch | what it fixes |
+|---|---|
+| `0001-restore-page-list-transfer-order` | The end-of-marking pause walks a page list to its tail. JetBrains ordered the two merges so the short list is walked ([`ec891474b0`](https://github.com/JetBrains/kotlin/commit/ec891474b0)); two weeks later [`7854b01473`](https://github.com/JetBrains/kotlin/commit/7854b01473) reversed them, and 2.4.20 walks the long one in every cycle. |
+| `0002-free-empty-pages-after-resume` | Empty pages are unmapped one `munmap` at a time inside the pause. The patch detaches them in the pause (one CAS) and unmaps them after the world resumes; no mutator can reach a detached page, so the lock-free stacks stay safe. Carries its own test. |
+| `0003-static-executable` | `-linker-option -static` does not produce a static executable ([KT-89362](https://youtrack.jetbrains.com/issue/KT-89362)): the compiler emits a dynamic interpreter and a `-Bdynamic` that switches `-lc` back to shared. The patch drops both for a static link ([JetBrains/kotlin#8127](https://github.com/JetBrains/kotlin/pull/8127) plus the `-Bdynamic` half) and asks for `sched_yield` by name: libstdc++ reaches it only weakly, and without it a static binary calls address zero the first time the collector waits for a concurrent sweeper. |
 
-1. **Control:** the stock sources are rebuilt with the dev LLVM bundle the runtime was built with and
-   must match every shipped module byte for byte. If they do not, the toolchain has drifted, and a
-   patched module would differ for a second reason; the build stops.
-2. The series is applied, the runtime rebuilt, the allocator's tests run, the compiler sources listed in
-   `compiler` recompiled (kotlinc of the same release, checked against its digest, with the options
-   that reproduce JetBrains' class set for the file), the checkout restored. Exactly the modules in
-   `modules` may differ.
-3. The stock distribution is copied **without `klib/cache`** (caches the compiler builds on demand,
-   carrying whatever runtime built them) and without the plugin's `provisioned.ok`; the changed modules
-   are swapped in; the top directory is named as the plugin names it on disk; a tarball, a POM and
-   digests go to `build/out` in Maven layout.
+**What 0001 + 0002 buy.** The end-of-marking pause of a synthetic Ktor service, 100 req/s, measured
+against stock ([`acceptance/`](acceptance/)):
 
-## Checking that a consumer gets it
-
-`consumer-check/` is the smallest consumer: one program that fills the heap across size classes and
-collects, a Kotlin Multiplatform build with no other dependency, and a repository filter that admits
-only `-yrt` versions of `kotlin-native-prebuilt`. `run.sh` links it against stock and against a
-version from the given repository and compares:
-
-```bash
-consumer-check/run.sh 2.4.20 2.4.20-yrt.1 file://$PWD/build/out   # must differ from stock
-consumer-check/run.sh 2.4.20 2.4.20-yrt.0 file://$PWD/build/out   # must not
-```
-
-Both halves are needed. The patched binary differing from stock proves nothing on its own - the
-packaging or the version string could change it; the control coming out identical is what shows the
-difference is the runtime. The allocator's functions are inlined into the GC thread in a release
-binary, so there is no symbol to look for instead.
-
-On 2026-09-27: stock `72d58837`, `2.4.20-yrt.1` `03039fc1`, `2.4.20-yrt.0` `72d58837`; all three ran.
-The plugin unpacked each into `~/.konan/kotlin-native-prebuilt-linux-x86_64-<version>`.
-
-## Acceptance before a version is published
-
-- the build's control and module check (above), and `consumer-check` against the patched build and
-  its `yrt.0` control;
-- the runtime's own allocator tests, the `custom_alloc_test` group, built outside JetBrains' build by
-  `scripts/alloc_tests.py` on their recipe and run by `build-dist.sh` on the patched sources. **They
-  pass with the empty-page frees removed altogether** (29 of 29 on that mutant), so patch 0002 carries
-  its own test, `HeapFreesEmptyPagesAfterThePause`: it fails on stock ("an empty page was destroyed
-  inside the pause"), fails on that mutant ("... was not destroyed by the sweep after the pause"), and
-  passes on the series - 30 of 30;
-- one pause measurement at a large heap against stock (`acceptance/pause.sh`): a version whose pause
-  did not fall is not published.
-
-**2.4.20-yrt.1, 2026-09-27** (`acceptance/2026-09-27-2.4.20-yrt.1-pause.log`), a synthetic Ktor
-service with the GC log, one host with 20 cores (shared with other work, so absolute numbers are
-noisier than on a dedicated host), 100 req/s for 150 s, three alternating starts, end-of-marking pause:
-
-| | stock p50 / p99 | 2.4.20-yrt.1 p50 / p99 |
+| live heap, threads | stock p99 | 2.4.20-yrt.1 p99 |
 |---|---|---|
-| 1 GB live heap, 100 threads | 11.4–15.0 / 19.6–26.4 ms | **0.11–0.33 / 0.46–1.16 ms** |
-| 512 MB live heap, 5 threads | 7.5–9.4 / 11.7–14.9 ms | **0.07–0.11 / 0.39–0.62 ms** |
+| 1 GB, 100 | 19.6–26.4 ms | **0.46–1.16 ms** |
+| 512 MB, 5 | 11.7–14.9 ms | **0.39–0.62 ms** |
 
-Resident memory and request latency p99 are the same for both (maximum latency lower on the patched
-build: 11–18 against 22–40 ms). The CI build and a local build of 2.4.20-yrt.1 are the same bytes
-(sha256 `8105e7dd…`).
+Resident memory and request latency p99 are unchanged; at 90 % of capacity the patched build also
+lost the latency spikes stock had. **Only a large heap gains anything**: up to a live heap of about
+128 MB the stock pause is a few milliseconds and these patches move nothing that matters. The
+mechanism, with controls, on an independent subject:
+[`youndie/kesh` `bench/reports/b-19`](https://github.com/youndie/kesh/tree/main/bench/reports/b-19).
 
-## Publishing and consuming
+**What 0003 buys.** With `-static` and the host's glibc, stock links a binary that still has an
+interpreter and three shared libraries; `2.4.20-yrt.2` links one with neither, which runs in an empty
+`FROM scratch` image. Without `-static`, 0003 changes nothing: the same program links to the same bytes
+as on `yrt.1`.
 
-```bash
-REPOSILITE_USER=... REPOSILITE_SECRET=... scripts/publish.sh 2.4.20-yrt.1
+## Using it
+
+In the service's `gradle.properties`:
+
+```properties
+kotlin.native.version=2.4.20-yrt.2
 ```
 
-The token is issued by the infra repository's `reposilite-token` workflow with the coordinate
-`org.jetbrains.kotlin:kotlin-native-prebuilt`, and lands in this repository's secrets. A consumer sets
-`kotlin.native.version=2.4.20-yrt.1` and needs reposilite among the repositories the plugin resolves
-the distribution from, with nothing filtering `org.jetbrains.kotlin` out of it. In the portfolio that
-is sborka's job: only executables link a runtime, so libraries stay on stock.
+and reposilite among the repositories, admitting only the patched versions of this one module, so the
+stock distribution keeps coming from Central:
 
-## Moving to a new Kotlin
+```kotlin
+// settings.gradle.kts, dependencyResolutionManagement.repositories
+maven("https://reposilite.kotlin.website/snapshots") {
+    mavenContent {
+        includeVersionByRegex("org\\.jetbrains\\.kotlin", "kotlin-native-prebuilt", ".*-yrt\\.[0-9]+")
+    }
+}
+```
 
-Copy the series to `patches/kotlin-native/<new>/`, apply it to the new tag, fix what does not apply,
-build, run the acceptance, publish `<new>-yrt.1`. **First check whether the new version still needs
-each patch**: when JetBrains changes `PrepareForGC`, the patch goes, and when nothing is left, so does
-this repository.
+Only executables link a runtime, so libraries stay on stock. For a static executable, the host-glibc
+linker options are in [`consumer-check/build.gradle.kts`](consumer-check/build.gradle.kts)
+(`-Prt.static`); with 0003 they no longer include `--no-dynamic-linker` or a `linkerKonanFlags`
+override.
 
-## Open questions
+## What it does not do
 
-1. ~~Does the plugin accept a suffixed `kotlin.native.version` with `compilerVersion=<kotlin>`?~~
-   Yes (`consumer-check`, 2026-09-27).
-2. ~~Is the tarball's top directory what the plugin expects?~~ Yes: it unpacked into the directory it
-   names and linked from it.
-3. Does a debug or test binary take the runtime from somewhere other than `konan/targets/*/native`
-   (a cache built on the consumer's machine is built from this distribution, so it should be fine)?
-4. Where does the publishing run: GitHub Actions do not start on a private repository here, and the
-   publishing secret is not meant to leave CI.
+- **Other hosts and targets.** It is a distribution for `linux-x86_64` hosts; a Mac builds with stock.
+  On this host the runtime patches reach the `linux_x64` target only - other targets keep the stock
+  runtime - while 0003, being in the linker, applies to any GCC-linked target asked for `-static`.
+- **Resident memory that follows the thread count** ([KT-89365](https://youtrack.jetbrains.com/issue/KT-89365)).
+  Examined and not patched: the mechanism is reproduced, but a service on 16 KiB pages gains about 5 %
+  from the fix. See [`research/kt-89365/`](research/kt-89365/); `fixedBlockPageSize=16` is the
+  workaround.
+- **`scratch` without gconv.** Ktor's charsets on Kotlin/Native are glibc `iconv`, which `dlopen`s
+  gconv modules even for UTF-8; a static Ktor service still needs them in the image. A `ktor-io` that
+  does UTF-8 itself would be a separate artifact on Ktor's release cadence, and does not exist.
+- **Debug and test binaries** are not checked separately; the checks link release executables.
+
+## Building, checking, publishing
+
+A version is built, checked and published by CI on a `kn-<kotlin>-yrt.<n>` tag; running the workflow
+by hand builds and checks without publishing. What each check is and why, how to build locally, and
+how to move the series to a new Kotlin: [`docs/MAINTAINING.md`](docs/MAINTAINING.md).
 
 ## License
 

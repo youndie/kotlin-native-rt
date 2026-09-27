@@ -82,7 +82,7 @@ unchanged - and `scripts/publish.sh` refuses it.
 | version | series | published |
 |---|---|---|
 | `2.4.20-yrt.1` | 0001, 0002 | 2026-09-27 |
-| `2.4.20-yrt.2` | 0001, 0002, 0003 | not yet |
+| `2.4.20-yrt.2` | 0001, 0002, 0003 | 2026-09-27 |
 
 ## Building
 

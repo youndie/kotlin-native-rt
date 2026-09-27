@@ -15,7 +15,8 @@ build**, and nothing here is sent upstream.
 **Status: draft.** `2.4.20-yrt.1` was built end to end on 2026-09-27 on a Linux x86_64 host: the
 control rebuilt all 24 shipped runtime modules byte for byte, the series changed `custom_alloc` alone
 (md5 `b8f9bc7d…`), and the tarball (264 MB) carries that module, no `klib/cache`, and
-`compilerVersion=2.4.20`. **The Kotlin Gradle plugin takes it** (`consumer-check`, below): it resolves
+`compilerVersion=2.4.20`. The tarball is built from JetBrains' own on Maven Central and is
+reproducible: CI and a local host produced the same bytes. **The Kotlin Gradle plugin takes it** (`consumer-check`, below): it resolves
 `kotlin.native.version=2.4.20-yrt.1` from a Maven repository, unpacks it, links and runs, and the
 unpatched control links to the stock binary byte for byte. **Nothing is published.**
 
@@ -120,11 +121,27 @@ The plugin unpacked each into `~/.konan/kotlin-native-prebuilt-linux-x86_64-<ver
 
 - the build's control and module check (above), and `consumer-check` against the patched build and
   its `yrt.0` control;
-- JetBrains' runtime tests for the custom allocator (`CustomAllocatorTest`, the `PageStore` tests) —
-  **not run yet**; the patches' safety rests on the argument in 0002 and on an assertions-on smoke
-  (`-Xbinary=runtimeAssertionsMode=panic`) per build;
-- one pause measurement at a large heap against stock: a version whose pause did not fall is not
-  published.
+- the runtime's own allocator tests, the `custom_alloc_test` group, built outside JetBrains' build by
+  `scripts/alloc_tests.py` on their recipe and run by `build-dist.sh` on the patched sources. **They
+  pass with the empty-page frees removed altogether** (29 of 29 on that mutant), so patch 0002 carries
+  its own test, `HeapFreesEmptyPagesAfterThePause`: it fails on stock ("an empty page was destroyed
+  inside the pause"), fails on that mutant ("... was not destroyed by the sweep after the pause"), and
+  passes on the series - 30 of 30;
+- one pause measurement at a large heap against stock (`acceptance/pause.sh`): a version whose pause
+  did not fall is not published.
+
+**2.4.20-yrt.1, 2026-09-27** (`acceptance/2026-09-27-2.4.20-yrt.1-pause.log`), a synthetic Ktor
+service with the GC log, one host with 20 cores (shared with other work, so absolute numbers are
+noisier than on a dedicated host), 100 req/s for 150 s, three alternating starts, end-of-marking pause:
+
+| | stock p50 / p99 | 2.4.20-yrt.1 p50 / p99 |
+|---|---|---|
+| 1 GB live heap, 100 threads | 11.4–15.0 / 19.6–26.4 ms | **0.11–0.33 / 0.46–1.16 ms** |
+| 512 MB live heap, 5 threads | 7.5–9.4 / 11.7–14.9 ms | **0.07–0.11 / 0.39–0.62 ms** |
+
+Resident memory and request latency p99 are the same for both (maximum latency lower on the patched
+build: 11–18 against 22–40 ms). The CI build and a local build of 2.4.20-yrt.1 are the same bytes
+(sha256 `8105e7dd…`).
 
 ## Publishing and consuming
 

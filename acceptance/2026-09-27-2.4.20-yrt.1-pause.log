@@ -1,0 +1,22 @@
+## L=1000000000 threads=100
+# stock 674e4d2d, patched 1b8ebfbc; args: --L=1000000000 --node-bytes=720 --chunk-bytes=16 --s=12 --m=8 --threads=100 --size-mix=24:31238,32:2089,40:2044,48:1072,56:563,64:279,72:124,80:259,88:427,96:327,104:125,112:109,120:54,128:50,136:1,144:53,152:58,160:2,168:51,176:1,184:1,192:2,200:3,208:1,224:102,232:2,240:1,248:1,272:1,280:52,288:1,312:50,328:2,344:2,416:1,432:50,448:50,464:1,512:1,536:3,600:50,608:1,872:50,1080:100,1656:50,8216:2,14280:1,14328:1,28528:1,28624:1 --port=18401; 100 req/s for 150s; 20 cores
+# round 1
+stock    collections  24  pause#1 p99   0.68  pause#2 p50  14.18 p99  19.55 max  19.55 ms  threads 154 rss 2335 MB  requests 15001  latency med=3.3ms  p(99)=6.33ms max=40.04ms
+patched  collections  24  pause#1 p99   0.62  pause#2 p50   0.17 p99   0.99 max   0.99 ms  threads 133 rss 2350 MB  requests 15001  latency med=2.89ms p(99)=5.84ms max=15.63ms
+# round 2
+stock    collections  24  pause#1 p99   0.43  pause#2 p50  11.42 p99  25.33 max  25.33 ms  threads 142 rss 2366 MB  requests 15001  latency med=2.91ms p(99)=5.74ms max=29.15ms
+patched  collections  24  pause#1 p99   0.52  pause#2 p50   0.11 p99   0.46 max   0.46 ms  threads 145 rss 2355 MB  requests 15000  latency med=3.39ms p(99)=6.36ms max=13.57ms
+# round 3
+stock    collections  24  pause#1 p99   0.61  pause#2 p50  14.97 p99  26.40 max  26.40 ms  threads 131 rss 2356 MB  requests 15000  latency med=3.34ms p(99)=6.75ms max=38.75ms
+patched  collections  24  pause#1 p99   0.58  pause#2 p50   0.33 p99   1.16 max   1.16 ms  threads 131 rss 2350 MB  requests 15001  latency med=3.65ms p(99)=6.58ms max=11.32ms
+## L=512000000 threads=5
+# stock 674e4d2d, patched 1b8ebfbc; args: --L=512000000 --node-bytes=720 --chunk-bytes=16 --s=12 --m=8 --threads=5 --size-mix=24:31238,32:2089,40:2044,48:1072,56:563,64:279,72:124,80:259,88:427,96:327,104:125,112:109,120:54,128:50,136:1,144:53,152:58,160:2,168:51,176:1,184:1,192:2,200:3,208:1,224:102,232:2,240:1,248:1,272:1,280:52,288:1,312:50,328:2,344:2,416:1,432:50,448:50,464:1,512:1,536:3,600:50,608:1,872:50,1080:100,1656:50,8216:2,14280:1,14328:1,28528:1,28624:1 --port=18401; 100 req/s for 150s; 20 cores
+# round 1
+stock    collections  47  pause#1 p99   0.22  pause#2 p50   9.04 p99  13.35 max  13.35 ms  threads 50 rss 1193 MB  requests 15001  latency med=3.4ms  p(99)=6.77ms max=23.8ms
+patched  collections  48  pause#1 p99   0.22  pause#2 p50   0.07 p99   0.39 max   0.39 ms  threads 43 rss 1175 MB  requests 15001  latency med=3.94ms p(99)=6.59ms max=11.35ms
+# round 2
+stock    collections  48  pause#1 p99   0.22  pause#2 p50   7.47 p99  11.68 max  11.68 ms  threads 61 rss 1192 MB  requests 15001  latency med=4.06ms p(99)=6.69ms max=21.89ms
+patched  collections  48  pause#1 p99   0.27  pause#2 p50   0.11 p99   0.62 max   0.62 ms  threads 51 rss 1180 MB  requests 15000  latency med=3.56ms p(99)=6.61ms max=17.85ms
+# round 3
+stock    collections  47  pause#1 p99   0.12  pause#2 p50   9.42 p99  14.92 max  14.92 ms  threads 36 rss 1209 MB  requests 15001  latency med=3.71ms p(99)=7.13ms max=27.09ms
+patched  collections  48  pause#1 p99   0.28  pause#2 p50   0.07 p99   0.53 max   0.53 ms  threads 48 rss 1171 MB  requests 15000  latency med=3.56ms p(99)=6.56ms max=12.27ms

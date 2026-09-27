@@ -7,9 +7,10 @@ coordinate the Kotlin Gradle plugin already resolves:
 org.jetbrains.kotlin:kotlin-native-prebuilt:<kotlin>-yrt.<n>:linux-x86_64@tar.gz
 ```
 
-The compiler, the standard library and the platform libraries are JetBrains' own, byte for byte. What
-differs is a small patch series against the runtime (and, later, the distribution's
-`konan.properties`), kept here as files so each change can be read on its own. This is **not a JetBrains
+The standard library, the platform libraries and almost all of the compiler are JetBrains' own, byte
+for byte. What differs is a small patch series, kept here as files so each change can be read on its
+own: the runtime's allocator (`custom_alloc`), and one compiler source, `Linker.kt`, whose classes are
+recompiled with the kotlinc of the same release and swapped into `konan/lib`. This is **not a JetBrains
 build**, and nothing here is sent upstream.
 
 **Status: draft.** `2.4.20-yrt.1` was built end to end on 2026-09-27 on a Linux x86_64 host: the
@@ -29,6 +30,7 @@ the series is expected to change, and the build refuses to package if any other 
 |---|---|---|
 | `0001-restore-page-list-transfer-order` | the order of the two page-list merges in `PageStore::PrepareForGC` | At the end of marking, with the world stopped, the second merge walks its source list to the tail. [`ec891474b0`](https://github.com/JetBrains/kotlin/commit/ec891474b0) (January 2023) put the long list (`used_`) first so the short one is walked; [`7854b01473`](https://github.com/JetBrains/kotlin/commit/7854b01473) two weeks later reversed the lines without comment. 2.4.20 walks the long list in every cycle. |
 | `0002-free-empty-pages-after-resume` | empty pages are detached in the pause (one CAS) and unmapped by the GC thread when the sweep starts, after the world resumes | Freeing inside the pause is how the runtime stays safe with lock-free page stacks ([`AtomicStack.hpp`](https://github.com/JetBrains/kotlin/blob/v2.4.20/kotlin-native/runtime/src/alloc/custom/cpp/AtomicStack.hpp)); detaching the whole list keeps that safety - no mutator can reach a detached page, and none is inside `Pop` at a safepoint - and moves one `munmap` per page out of the pause. |
+| `0003-static-executable` | the compiler's `GccBasedLinker`: with `-static` among the user's linker options it emits no `-dynamic-linker`, drops `-Bdynamic` from `linkerKonanFlags`, and asks for `sched_yield` by name | `-static` is undone twice on stock ([KT-89362](https://youtrack.jetbrains.com/issue/KT-89362)): an interpreter is emitted unconditionally, and `-Bdynamic` after the user's flags switches every library behind it, `-lc` included, back to shared. The first two changes are [JetBrains/kotlin#8127](https://github.com/JetBrains/kotlin/pull/8127) (closed unmerged) and the `-Bdynamic` half of the same ticket. The third was found here: libstdc++ reaches `sched_yield` only through a weak reference, which does not pull it out of a static libc, so a static binary that nothing else links it into calls address zero the first time the collector waits for a concurrent sweeper. |
 
 **What the two buy**, measured on a synthetic Ktor service with a 1 GB live heap and 100 allocating
 threads, 16 KiB pages, CMS, one process on a four-core host, end-of-marking pause at p99: 23–52 ms
@@ -42,16 +44,6 @@ few milliseconds on the stock runtime and these patches do not move anything tha
 
 ## Planned, not here yet
 
-- **`-static` that links a static executable** ([KT-89362](https://youtrack.jetbrains.com/issue/KT-89362)).
-  Two halves. The compiler's `GccBasedLinker` emits `-dynamic-linker` unconditionally, so a
-  `-static` binary still carries `PT_INTERP` and segfaults at start; the fix is
-  [JetBrains/kotlin#8127](https://github.com/JetBrains/kotlin/pull/8127) (closed unmerged), 16 lines
-  in `native/utils/.../Linker.kt` with a test. And `linkerKonanFlags.linux_x64` carries a hardcoded
-  `-Bdynamic` after the user's flags, which is a `konan.properties` line in this distribution. **This
-  one is not a runtime patch**: `Linker.kt` is compiled into the compiler's jar, so the build has to
-  recompile those classes and replace them in `konan/lib`, and the control becomes "the stock
-  `Linker.kt`, recompiled and swapped in the same way, links a consumer to the stock binary". The
-  recipe and the measurements are in sborka's `docs/research/static-probe`.
 - **Resident memory that follows the thread count** ([KT-89365](https://youtrack.jetbrains.com/issue/KT-89365)):
   RSS = 7 MB + 2.96 MB x threads at the default page size, because every thread keeps a page per size
   class it has touched until the next collection. JetBrains closed it as a duplicate of
@@ -65,6 +57,15 @@ few milliseconds on the stock runtime and these patches do not move anything tha
   follows Ktor's releases, not Kotlin's. On Kotlin/Native the charset layer is glibc `iconv`, which
   `dlopen`s gconv modules even for UTF-8, so a `scratch` image fails the first URL encoding.
 
+**0003 on 2.4.20-yrt.2, 2026-09-27** (`consumer-check/static.sh`): with `-linker-option -static`
+and the host's glibc, stock produces a binary with an interpreter and three shared libraries;
+`2.4.20-yrt.2` produces one with neither, `sched_yield` defined, which collects and runs - also in an
+empty `FROM scratch` image (538 KB). Without `-static` the consumer links to the same binary as on
+`yrt.1` (`03039fc1`), so 0003 changes nothing for an ordinary link. Found on the way: the recipe the
+static services use by hand (`--no-dynamic-linker` plus `linkerKonanFlags` without `-Bdynamic`) gives
+byte for byte the binary 0003 gives without the `sched_yield` line - and that binary crashes in the
+collector. The services that ship it today link `sched_yield` in through something else.
+
 ## Versions
 
 `<kotlin>-yrt.<n>`: `2.4.20-yrt.1`, `2.4.20-yrt.2`, ... A number is never reused (reposilite answers
@@ -75,7 +76,13 @@ few milliseconds on the stock runtime and these patches do not move anything tha
 compiler version. The plugin accepts that next to `kotlin.native.version=<kotlin>-yrt.<n>`.
 
 **`yrt.0` is reserved for the control**: `scripts/build-dist.sh <kotlin> 0` packages the stock runtime
-exactly as a patched build is packaged, and `scripts/publish.sh` refuses it.
+exactly as a patched build is packaged - with the compiler sources the series touches recompiled
+unchanged - and `scripts/publish.sh` refuses it.
+
+| version | series | published |
+|---|---|---|
+| `2.4.20-yrt.1` | 0001, 0002 | 2026-09-27 |
+| `2.4.20-yrt.2` | 0001, 0002, 0003 | not yet |
 
 ## Building
 
@@ -90,8 +97,10 @@ KOTLIN_SRC=~/kotlin-src scripts/build-dist.sh 2.4.20 1
 1. **Control:** the stock sources are rebuilt with the dev LLVM bundle the runtime was built with and
    must match every shipped module byte for byte. If they do not, the toolchain has drifted, and a
    patched module would differ for a second reason; the build stops.
-2. The series is applied, the runtime rebuilt, the checkout restored. Exactly the modules in `modules`
-   may differ.
+2. The series is applied, the runtime rebuilt, the allocator's tests run, the compiler sources listed in
+   `compiler` recompiled (kotlinc of the same release, checked against its digest, with the options
+   that reproduce JetBrains' class set for the file), the checkout restored. Exactly the modules in
+   `modules` may differ.
 3. The stock distribution is copied **without `klib/cache`** (caches the compiler builds on demand,
    carrying whatever runtime built them) and without the plugin's `provisioned.ok`; the changed modules
    are swapped in; the top directory is named as the plugin names it on disk; a tarball, a POM and

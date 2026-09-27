@@ -1,0 +1,50 @@
+diff -ruN a/native/utils/src/org/jetbrains/kotlin/konan/target/Linker.kt b/native/utils/src/org/jetbrains/kotlin/konan/target/Linker.kt
+--- a/native/utils/src/org/jetbrains/kotlin/konan/target/Linker.kt
++++ b/native/utils/src/org/jetbrains/kotlin/konan/target/Linker.kt
+@@ -391,6 +391,15 @@
+             listOf(dsymutil, executable, "-o", outputDsymBundle)
+ }
+ 
++/**
++ * Whether the user asked the linker for a static executable (`-linker-option -static`). Two things the
++ * link line emits unconditionally then undo it: a dynamic interpreter, and the `-Bdynamic` in
++ * `linkerKonanFlags`, which comes after the user's flags and switches every library behind it back to
++ * shared - `-lc` included (KT-89362).
++ */
++private val List<String>.wantsStaticExecutable: Boolean
++    get() = "-static" in this
++
+ class GccBasedLinker(targetProperties: GccConfigurables)
+     : LinkerFlags(targetProperties), GccConfigurables by targetProperties {
+ 
+@@ -429,8 +438,18 @@
+             +"relro"
+             +"--build-id"
+             +"--eh-frame-hdr"
+-            +"-dynamic-linker"
+-            +dynamicLinker
++            // A static executable must not name an interpreter: the kernel would hand it to the dynamic
++            // loader, which relocates it as though it were dynamic, and it segfaults with no diagnostic.
++            if (!linkerArgs.wantsStaticExecutable) {
++                +"-dynamic-linker"
++                +dynamicLinker
++            } else {
++                // libstdc++ reaches `sched_yield` through a weak reference (std::this_thread::yield),
++                // and a weak reference does not pull a member out of a static libc: the symbol links
++                // as address zero, and the first time the collector waits for a concurrent sweeper
++                // it calls it. Asking for it by name makes the static libc provide it.
++                +"--undefined=sched_yield"
++            }
+             linkerHostSpecificFlags.forEach { +it }
+             +"-o"
+             +executable
+@@ -462,7 +481,8 @@
+             +linkerArgs
+             // See explanation about `-u__llvm_profile_runtime` here:
+             // https://github.com/llvm/llvm-project/blob/21e270a479a24738d641e641115bce6af6ed360a/llvm/lib/Transforms/Instrumentation/InstrProfiling.cpp#L930
+-            +linkerKonanFlags
++            // For a static executable, the stock flags minus `-Bdynamic`, and nothing else changed.
++            +if (linkerArgs.wantsStaticExecutable) linkerKonanFlags.filter { it != "-Bdynamic" } else linkerKonanFlags
+             +linkerGccFlags
+             +if (dynamic) "$libGcc/crtendS.o" else "$libGcc/crtend.o"
+             +"$crtPrefix/crtn.o"

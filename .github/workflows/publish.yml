@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           git clone --quiet --depth 1 --filter=blob:none --sparse --branch "v$KV" https://github.com/JetBrains/kotlin.git ~/kotlin-src
-          git -C ~/kotlin-src sparse-checkout set kotlin-native/runtime
+          git -C ~/kotlin-src sparse-checkout set kotlin-native/runtime native/utils/src
           git -C ~/kotlin-src rev-parse "v$KV^{commit}"
 
       - name: The control build (yrt.0), never published
@@ -68,6 +68,9 @@ jobs:
           set -euo pipefail
           consumer-check/run.sh "$KV" "$KV-yrt.$N" "file://$PWD/build/out"
           consumer-check/run.sh "$KV" "$KV-yrt.0" "file://$PWD/build/out"
+
+      - name: -static links a static executable, and stock does not
+        run: consumer-check/static.sh "$KV" "$KV-yrt.$N" "file://$PWD/build/out"
 
       - name: Publish
         if: env.PUBLISH == 'true'

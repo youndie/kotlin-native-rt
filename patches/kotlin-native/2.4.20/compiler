@@ -1,0 +1,1 @@
+native/utils/src/org/jetbrains/kotlin/konan/target/Linker.kt konan/lib/kotlin-native-compiler-embeddable.jar kotlin-native-utils

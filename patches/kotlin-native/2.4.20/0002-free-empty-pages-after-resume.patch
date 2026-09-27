@@ -1,0 +1,56 @@
+diff -ruN a/kotlin-native/runtime/src/alloc/custom/cpp/Heap.cpp b/kotlin-native/runtime/src/alloc/custom/cpp/Heap.cpp
+--- a/kotlin-native/runtime/src/alloc/custom/cpp/Heap.cpp
++++ b/kotlin-native/runtime/src/alloc/custom/cpp/Heap.cpp
+@@ -33,6 +33,12 @@
+ }
+ 
+ FinalizerQueue Heap::Sweep(gc::GCHandle gcHandle) noexcept {
++    // The empty pages PrepareForGC detached, destroyed now that the world has resumed.
++    for (int blockSize = 0; blockSize <= FixedBlockPage::MAX_BLOCK_SIZE; ++blockSize) {
++        fixedBlockPages_[blockSize].FreeDetached();
++    }
++    nextFitPages_.FreeDetached();
++    fixedBlockExtraObjectPages_.FreeDetached();
+     FinalizerQueue finalizerQueue;
+     CustomAllocDebug("Heap: before sweep FinalizerQueue size == %zu", finalizerQueue.size());
+     CustomAllocDebug("Heap::Sweep()");
+diff -ruN a/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp b/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp
+--- a/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp
++++ b/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp
+@@ -27,10 +27,18 @@
+         // the long one. This is the order ec891474b0 chose; 7854b01473 reversed it without comment.
+         unswept_.TransferAllFrom(std::move(used_));
+         unswept_.TransferAllFrom(std::move(ready_));
+-        T* page;
+-        while ((page = empty_.Pop())) page->Destroy();
++        // Detach the empty pages instead of destroying them here, inside the pause. `detached_` is
++        // emptied at the start of every sweep, so this is one CAS; FreeDetached() destroys the pages
++        // after the world resumes. No mutator can reach them: they are in no stack a mutator pops, and
++        // a mutator stopped at a safepoint is not inside AtomicStack::Pop.
++        detached_.TransferAllFrom(std::move(empty_));
+     }
+ 
++    // Runs on the GC thread at the start of the sweep, after the world has resumed.
++    void FreeDetached() noexcept {
++        while (T* page = detached_.Pop()) page->Destroy();
++    }
++
+     void Sweep(GCSweepScope& sweepHandle, FinalizerQueue& finalizerQueue) noexcept {
+         while (SweepSingle(sweepHandle, unswept_.Pop(), unswept_, ready_, finalizerQueue)) {
+         }
+@@ -108,6 +116,7 @@
+     }
+ 
+     void Clear() noexcept {
++        while (T* page = detached_.Pop()) page->Destroy();
+         while (T* page = empty_.Pop()) page->Destroy();
+         while (T* page = ready_.Pop()) page->Destroy();
+         while (T* page = used_.Pop()) page->Destroy();
+@@ -126,6 +135,7 @@
+     AtomicStack<T> ready_;
+     AtomicStack<T> used_;
+     AtomicStack<T> unswept_;
++    AtomicStack<T> detached_; // empty pages detached in the pause, destroyed after resume
+ };
+ 
+ template <typename SweepTraits>

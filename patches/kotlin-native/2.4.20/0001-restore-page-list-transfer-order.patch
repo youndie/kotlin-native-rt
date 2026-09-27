@@ -1,0 +1,16 @@
+diff -ruN a/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp b/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp
+--- a/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp
++++ b/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp
+@@ -22,8 +22,11 @@
+     using GCSweepScope = typename SweepTraits::GCSweepScope;
+ 
+     void PrepareForGC() noexcept {
+-        unswept_.TransferAllFrom(std::move(ready_));
++        // `used_` first: the first transfer into an empty `unswept_` is a single CAS, so only the second
++        // list is walked to its tail, and `used_` - the pages handed out since the last collection - is
++        // the long one. This is the order ec891474b0 chose; 7854b01473 reversed it without comment.
+         unswept_.TransferAllFrom(std::move(used_));
++        unswept_.TransferAllFrom(std::move(ready_));
+         T* page;
+         while ((page = empty_.Pop())) page->Destroy();
+     }

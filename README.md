@@ -12,8 +12,11 @@ differs is a small patch series against the runtime (and, later, the distributio
 `konan.properties`), kept here as files so each change can be read on its own. This is **not a JetBrains
 build**, and nothing here is sent upstream.
 
-**Status: draft.** The series builds; nothing is published yet, and the open questions at the end
-decide whether a consumer can pick it up at all.
+**Status: draft.** `2.4.20-yrt.1` was built end to end on 2026-09-27 on a Linux x86_64 host: the
+control rebuilt all 24 shipped runtime modules byte for byte, the series changed `custom_alloc` alone
+(md5 `b8f9bc7d…`), and the tarball (264 MB) carries that module, no `klib/cache`, and
+`compilerVersion=2.4.20`. **Nothing is published**, and the open questions at the end decide whether
+a consumer can pick it up at all.
 
 ## What is patched
 

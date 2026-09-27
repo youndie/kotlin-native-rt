@@ -1,0 +1,530 @@
+diff --git a/ktor-io/web/src/io/ktor/utils/io/charsets/ISO88591.kt b/ktor-io/common/src/io/ktor/utils/io/charsets/ISO88591.kt
+similarity index 51%
+rename from ktor-io/web/src/io/ktor/utils/io/charsets/ISO88591.kt
+rename to ktor-io/common/src/io/ktor/utils/io/charsets/ISO88591.kt
+index e0555d3..d7a9bb7 100644
+--- a/ktor-io/web/src/io/ktor/utils/io/charsets/ISO88591.kt
++++ b/ktor-io/common/src/io/ktor/utils/io/charsets/ISO88591.kt
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
++ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+  */
+ 
+ package io.ktor.utils.io.charsets
+@@ -19,6 +19,20 @@ internal fun encodeISO88591(input: CharSequence, fromIndex: Int, toIndex: Int, d
+     return toIndex - fromIndex
+ }
+ 
++/**
++ * Decodes `[startIndex, endIndex)` of [data] as ISO-8859-1 into [dst], returning the number of bytes
++ * read.
++ *
++ * Every one of the 256 byte values maps to the code point of the same number, so this cannot fail and
++ * — unlike a multi-byte encoding — has no sequence that a buffer boundary can split.
++ */
++internal fun decodeISO88591(data: ByteArray, startIndex: Int, endIndex: Int, dst: Appendable): Int {
++    for (index in startIndex until endIndex) {
++        dst.append((data[index].toInt() and 0xff).toChar())
++    }
++    return endIndex - startIndex
++}
++
+ private fun failedToMapError(ch: Int): Nothing {
+     throw MalformedInputException("The character with unicode point $ch couldn't be mapped to ISO-8859-1 character")
+ }
+diff --git a/ktor-io/jvmAndPosix/test/Iso88591WithoutIconvTest.kt b/ktor-io/jvmAndPosix/test/Iso88591WithoutIconvTest.kt
+new file mode 100644
+index 0000000..45314e4
+--- /dev/null
++++ b/ktor-io/jvmAndPosix/test/Iso88591WithoutIconvTest.kt
+@@ -0,0 +1,71 @@
++/*
++ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
++ */
++
++// ABOUTME: ISO-8859-1 encodes and decodes as a one-to-one byte/code-point map, in both directions,
++// ABOUTME: across buffer segments, and reports a character it cannot represent.
++
++import io.ktor.utils.io.charsets.*
++import io.ktor.utils.io.core.*
++import kotlinx.io.*
++import kotlin.test.*
++
++class Iso88591WithoutIconvTest {
++
++    @Test
++    fun encodesEveryByteValue() {
++        val text = (0..0xff).map { it.toChar() }.joinToString("")
++        val bytes = text.toByteArray(Charsets.ISO_8859_1)
++        assertEquals(256, bytes.size)
++        for (i in 0..0xff) {
++            assertEquals(i, bytes[i].toInt() and 0xff, "byte $i")
++        }
++    }
++
++    @Test
++    fun decodesEveryByteValue() {
++        val bytes = ByteArray(256) { it.toByte() }
++        val out = StringBuilder()
++        val consumed = Charsets.ISO_8859_1.newDecoder().decode(
++            kotlinx.io.Buffer().apply {
++                write(bytes)
++            },
++            out,
++            Int.MAX_VALUE
++        )
++        assertEquals(256, consumed)
++        assertEquals((0..0xff).map { it.toChar() }.joinToString(""), out.toString())
++    }
++
++    /** More than one kotlinx-io segment, so the decoder's loop runs more than once. */
++    @Test
++    fun decodesAcrossSegments() {
++        val bytes = ByteArray(20_000) { (it % 256).toByte() }
++        val out = StringBuilder()
++        val consumed = Charsets.ISO_8859_1.newDecoder().decode(
++            kotlinx.io.Buffer().apply {
++                write(bytes)
++            },
++            out,
++            Int.MAX_VALUE
++        )
++        assertEquals(20_000, consumed)
++        assertEquals(20_000, out.length)
++        assertEquals((19_999 % 256).toChar(), out[19_999])
++    }
++
++    /**
++     * `readText` passes `Int.MAX_VALUE` as the budget. If the budget is added to the segment's start
++     * offset to find the end, that overflows as soon as anything has already been read from the
++     * buffer, and the decoder walks backwards. Every other test here starts at offset zero and cannot
++     * see it.
++     */
++    @Test
++    fun decodesFromANonZeroOffsetWithAnUnboundedBudget() {
++        val packet = kotlinx.io.Buffer().apply { write(byteArrayOf(0x41, 0xE9.toByte(), 0x42, 0x43)) }
++        packet.readByte()
++        val out = StringBuilder()
++        Charsets.ISO_8859_1.newDecoder().decode(packet, out, Int.MAX_VALUE)
++        assertEquals("\u00e9BC", out.toString())
++    }
++}
+diff --git a/ktor-io/jvmAndPosix/test/Utf8SegmentBoundaryTest.kt b/ktor-io/jvmAndPosix/test/Utf8SegmentBoundaryTest.kt
+new file mode 100644
+index 0000000..adbd830
+--- /dev/null
++++ b/ktor-io/jvmAndPosix/test/Utf8SegmentBoundaryTest.kt
+@@ -0,0 +1,59 @@
++/*
++ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
++ */
++
++// ABOUTME: A multi-byte UTF-8 character that straddles a buffer segment boundary must decode whole.
++// ABOUTME: Without a boundary check the decoder consumes half a character and corrupts the output.
++
++import io.ktor.utils.io.charsets.*
++import kotlinx.io.*
++import kotlin.test.*
++
++class Utf8SegmentBoundaryTest {
++
++    /**
++     * kotlinx-io segments are 8192 bytes, so a source longer than that is delivered to the decoder in
++     * more than one chunk. This places a two-byte character across the seam: 8191 ASCII bytes, then
++     * `é`, whose lead byte is the last byte of the first segment and whose continuation byte is the
++     * first byte of the second.
++     *
++     * The iconv path handles this by consuming nothing and asking for the segments to be consolidated.
++     * Any replacement has to do the same; decoding the lead byte on its own is malformed input.
++     */
++    @Test
++    fun decodesACharacterSplitAcrossSegments() {
++        val head = "a".repeat(8191)
++        val text = head + "é" + "b".repeat(16)
++        val bytes = text.encodeToByteArray()
++        assertEquals(8191, head.encodeToByteArray().size, "the seam must fall inside the character")
++
++        val source = Buffer().apply { write(bytes) }
++        val out = StringBuilder()
++        Charsets.UTF_8.newDecoder().decode(source, out, Int.MAX_VALUE)
++
++        assertEquals(text, out.toString())
++    }
++
++    /** The same with a four-byte character, which is the widest sequence and the most to hold back. */
++    @Test
++    fun decodesAFourByteCharacterSplitAcrossSegments() {
++        for (offset in 8189..8191) {
++            val head = "a".repeat(offset)
++            val text = head + "😀" + "b".repeat(16) // U+1F600, four bytes in UTF-8
++            val source = Buffer().apply { write(text.encodeToByteArray()) }
++            val out = StringBuilder()
++            Charsets.UTF_8.newDecoder().decode(source, out, Int.MAX_VALUE)
++            assertEquals(text, out.toString(), "split at offset $offset")
++        }
++    }
++
++    /** The same unbounded-budget-at-a-non-zero-offset case for UTF-8. */
++    @Test
++    fun decodesFromANonZeroOffsetWithAnUnboundedBudget() {
++        val packet = kotlinx.io.Buffer().apply { write("xAB\u00e9CD".encodeToByteArray()) }
++        packet.readByte()
++        val out = StringBuilder()
++        Charsets.UTF_8.newDecoder().decode(packet, out, Int.MAX_VALUE)
++        assertEquals("AB\u00e9CD", out.toString())
++    }
++}
+diff --git a/ktor-io/linux/src/CharsetLinux.kt b/ktor-io/linux/src/CharsetLinux.kt
+index c075ef4..d6560af 100644
+--- a/ktor-io/linux/src/CharsetLinux.kt
++++ b/ktor-io/linux/src/CharsetLinux.kt
+@@ -15,11 +15,67 @@ internal val MAX_SIZE: size_t = size_t.MAX_VALUE
+ private const val DECODING_BUFFER_SIZE = 8192
+ 
+ public actual object Charsets {
+-    public actual val UTF_8: Charset by lazy { CharsetIconv("UTF-8") }
+-    public actual val ISO_8859_1: Charset by lazy { CharsetIconv("ISO-8859-1") }
++    public actual val UTF_8: Charset = CharsetUtf8
++    public actual val ISO_8859_1: Charset = CharsetIso88591
+     internal val UTF_16: Charset by lazy { CharsetIconv("UTF-16") }
+ }
+ 
++/**
++ * UTF-8 without iconv.
++ *
++ * glibc's iconv resolves every conversion through a module database it reads from
++ * /usr/lib/<triple>/gconv at run time, and loads the converters it names with dlopen. [CharsetIconv]
++ * pivots through UTF-16, so UTF-16.so is on the path of every conversion, UTF-8 included — measured:
++ * with that one module and the database present and nothing else, UTF-8 works; with the database
++ * present and no modules, it does not. So the most common charset in the library depends on what the
++ * runtime image happens to carry, and in an image that carries no gconv tree `iconv_open("UTF-8", …)`
++ * fails with EINVAL — while the Kotlin/Native standard library encodes and decodes UTF-8 itself,
++ * without libc.
++ */
++private object CharsetUtf8 : Charset("UTF-8") {
++    override fun newEncoder(): CharsetEncoder = CharsetEncoderImpl(this)
++    override fun newDecoder(): CharsetDecoder = CharsetDecoderImpl(this)
++}
++
++/**
++ * ISO-8859-1 without iconv, for the same reason as [CharsetUtf8] and with a shorter argument: the
++ * encoding is a one-to-one map between the 256 byte values and the first 256 code points, so there is
++ * nothing for libc to do. Ktor reaches for it on paths a service does not choose — the
++ * `Sec-WebSocket-Accept` digest and OAuth2's Basic credentials are both built through it — so leaving
++ * it on iconv would keep WebSocket and OAuth2 servers tied to the runtime image's gconv tree.
++ */
++private object CharsetIso88591 : Charset("ISO-8859-1") {
++    override fun newEncoder(): CharsetEncoder = CharsetEncoderImpl(this)
++    override fun newDecoder(): CharsetDecoder = CharsetDecoderImpl(this)
++}
++
++/**
++ * The index just past the last complete UTF-8 sequence in `[startIndex, endIndex)`.
++ *
++ * A segment can end in the middle of a multi-byte character, and the caller has to leave those bytes
++ * in the source rather than decode them. A sequence is at most four bytes, so at most three trailing
++ * bytes are ever held back.
++ */
++private fun lastCompleteUtf8Boundary(data: ByteArray, startIndex: Int, endIndex: Int): Int {
++    var i = endIndex - 1
++    val limit = maxOf(startIndex, endIndex - 4)
++    while (i >= limit) {
++        val b = data[i].toInt() and 0xFF
++        if (b and 0xC0 != 0x80) {
++            val needed = when {
++                b and 0x80 == 0x00 -> 1
++                b and 0xE0 == 0xC0 -> 2
++                b and 0xF0 == 0xE0 -> 3
++                b and 0xF8 == 0xF0 -> 4
++                else -> 1 // malformed lead byte: let the decoder report it
++            }
++            return if (i + needed <= endIndex) endIndex else i
++        }
++        i--
++    }
++    return endIndex
++}
++
+ internal actual fun findCharset(name: String): Charset {
+     if (name == "UTF-8" || name == "utf-8" || name == "UTF8" || name == "utf8") return Charsets.UTF_8
+     if (name == "ISO-8859-1" || name == "iso-8859-1" || name == "ISO_8859_1") return Charsets.ISO_8859_1
+@@ -57,6 +113,22 @@ internal actual fun CharsetEncoder.encodeImpl(input: CharSequence, fromIndex: In
+     val length = toIndex - fromIndex
+     if (length == 0) return 0
+ 
++    if (_charset === CharsetUtf8) {
++        // `throwOnInvalidSequence` for the same reason the decoder passes it: without it an unpaired
++        // surrogate is silently replaced with U+FFFD, where iconv reports EILSEQ. A lone surrogate is
++        // reachable from ordinary code — a substring that cut a pair in half — so this is not an
++        // exotic input, and changing what it does would be a behaviour change this is not making.
++        val encoded = try {
++            input.substring(fromIndex, toIndex).encodeToByteArray(throwOnInvalidSequence = true)
++        } catch (cause: CharacterCodingException) {
++            throw MalformedInputException("Malformed or unmappable bytes at input")
++        }
++        dst.write(encoded)
++        return length
++    }
++
++    if (_charset === CharsetIso88591) return encodeISO88591(input, fromIndex, toIndex, dst)
++
+     val chars = input.substring(fromIndex, toIndex).toCharArray()
+     val charset = iconvCharsetName(_charset._name)
+     val cd: COpaquePointer? = iconv_open(charset, platformUtf16)
+@@ -107,6 +179,9 @@ internal actual fun CharsetEncoder.encodeImpl(input: CharSequence, fromIndex: In
+ 
+ @OptIn(ExperimentalForeignApi::class, UnsafeIoApi::class, InternalIoApi::class)
+ public actual fun CharsetDecoder.decode(input: Source, dst: Appendable, max: Int): Int {
++    if (_charset === CharsetUtf8) return decodeUtf8(input, dst, max)
++    if (_charset === CharsetIso88591) return decodeLatin1(input, dst, max)
++
+     val charset = iconvCharsetName(charset.name)
+     val cd = iconv_open(platformUtf16, charset)
+     checkErrors(cd, charset)
+@@ -178,6 +253,84 @@ internal actual fun CharsetEncoder.encodeToByteArrayImpl(
+     encodeToImpl(this, input, fromIndex, toIndex)
+ }.readByteArray()
+ 
++/**
++ * The UTF-8 half of [decode], without iconv.
++ *
++ * Keeps the contract of the iconv path: returns the number of BYTES consumed, stops at [max] bytes,
++ * appends decoded characters to [dst], and throws [MalformedInputException] on input that is not
++ * valid UTF-8. Only complete sequences are consumed, so a character split across two segments is
++ * left in the source for the next call — the same consolidation the iconv path performs when a
++ * segment boundary falls inside a character.
++ */
++@OptIn(UnsafeIoApi::class, InternalIoApi::class)
++private fun decodeUtf8(input: Source, dst: Appendable, max: Int): Int {
++    var copied = 0
++    while (!input.exhausted() && copied < max) {
++        var bytesConsumed = 0
++        var headSegmentSize = 0
++        var cutByBudget = false
++        UnsafeBufferOperations.readFromHead(input.buffer) { data, startIndex, endIndex ->
++            headSegmentSize = endIndex - startIndex
++            // Overflow-safe: `startIndex + (max - copied)` goes negative when `max` is near
++            // Int.MAX_VALUE, which is how readText passes it, and `startIndex` is not zero.
++            val budget = max - copied
++            val budgetEnd = if (budget >= endIndex - startIndex) endIndex else startIndex + budget
++            cutByBudget = budgetEnd < endIndex
++            val end = lastCompleteUtf8Boundary(data, startIndex, budgetEnd)
++            if (end > startIndex) {
++                val text = try {
++                    data.decodeToString(startIndex, end, throwOnInvalidSequence = true)
++                } catch (cause: CharacterCodingException) {
++                    throw MalformedInputException("Malformed or unmappable bytes at input")
++                }
++                dst.append(text)
++            }
++            val consumed = end - startIndex
++            copied += consumed
++            bytesConsumed = consumed
++            consumed
++        }
++
++        // THE BUDGET IS NOT AN ERROR. `max` can land inside a multi-byte character, and then there is
++        // nothing wrong with the input — there is simply no whole character left within what the
++        // caller asked for. Stopping is the answer; throwing would turn a short read into a failure.
++        if (cutByBudget && bytesConsumed == 0) break
++
++        if (bytesConsumed == 0) {
++            if (input.buffer.size > headSegmentSize.toLong()) {
++                // Incomplete multi-byte character at a segment boundary: consolidate and retry.
++                val remaining = input.readByteArray()
++                input.buffer.write(remaining)
++                continue
++            }
++            throw MalformedInputException("Incomplete or truncated byte sequence at input")
++        }
++    }
++    return copied
++}
++
++/**
++ * The ISO-8859-1 half of [decode], without iconv. Simpler than [decodeUtf8] because one byte is one
++ * character: no sequence can straddle a segment boundary, so nothing is ever held back.
++ */
++@OptIn(UnsafeIoApi::class, InternalIoApi::class)
++private fun decodeLatin1(input: Source, dst: Appendable, max: Int): Int {
++    var copied = 0
++    while (!input.exhausted() && copied < max) {
++        var bytesConsumed = 0
++        UnsafeBufferOperations.readFromHead(input.buffer) { data, startIndex, endIndex ->
++            val budget = max - copied
++            val end = if (budget >= endIndex - startIndex) endIndex else startIndex + budget
++            val consumed = decodeISO88591(data, startIndex, end, dst)
++            copied += consumed
++            bytesConsumed = consumed
++            consumed
++        }
++        if (bytesConsumed == 0) break
++    }
++    return copied
++}
++
+ internal fun checkIconvResult(errno: Int) {
+     if (errno == EILSEQ) throw MalformedInputException("Malformed or unmappable bytes at input")
+     if (errno == EINVAL) return // too few input bytes
+diff --git a/ktor-io/linux/test/CharsetErrorSemanticsTest.kt b/ktor-io/linux/test/CharsetErrorSemanticsTest.kt
+new file mode 100644
+index 0000000..66cb30a
+--- /dev/null
++++ b/ktor-io/linux/test/CharsetErrorSemanticsTest.kt
+@@ -0,0 +1,155 @@
++/*
++ * Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
++ */
++
++// ABOUTME: What the linux charsets do with input that is malformed, unmappable, or cut in half.
++// ABOUTME: These are the cases where a hand-written codec and iconv are easiest to make disagree.
++
++import io.ktor.utils.io.charsets.*
++import kotlinx.io.*
++import kotlin.test.*
++
++/**
++ * Error semantics of the `linux` charsets.
++ *
++ * Deliberately in `linux/test` and not in `jvmAndPosix/test`: these assertions are platform
++ * behaviour, not library contract. The JVM replaces an unmappable character with `?` and a malformed
++ * byte with U+FFFD; `linux` throws on both, because that is what iconv did and what this must keep
++ * doing. Asserting it anywhere wider turns a platform difference into a failing build.
++ *
++ * All but the two budget tests pass against the iconv implementation as well, which is the point of
++ * them: they pin behaviour that must not change. The two that do not are the one deliberate
++ * difference, documented on them.
++ */
++class CharsetErrorSemanticsTest {
++
++    // ---- malformed input: throw, never substitute ------------------------------------------------
++
++    /**
++     * `ByteArray.decodeToString()` substitutes U+FFFD by default, which would be a silent behaviour
++     * change from iconv's EILSEQ. The replacement passes `throwOnInvalidSequence = true` instead.
++     */
++    @Test
++    fun rejectsMalformedUtf8RatherThanSubstituting() {
++        // 0xC3 announces a two-byte sequence; 0x28 is not a continuation byte.
++        val cases = listOf(
++            byteArrayOf(0x61, 0xC3.toByte(), 0x28, 0x62), // bad continuation
++            byteArrayOf(0x61, 0x80.toByte(), 0x62), // lone continuation byte
++            byteArrayOf(0x61, 0xC0.toByte(), 0xAF.toByte(), 0x62), // overlong encoding of '/'
++            byteArrayOf(0x61, 0xED.toByte(), 0xA0.toByte(), 0x80.toByte()), // UTF-16 surrogate
++            byteArrayOf(0x61, 0xF5.toByte(), 0x80.toByte(), 0x80.toByte(), 0x80.toByte()), // > U+10FFFF
++        )
++        for ((index, bytes) in cases.withIndex()) {
++            val out = StringBuilder()
++            assertFailsWith<MalformedInputException>("case $index") {
++                Charsets.UTF_8.newDecoder().decode(Buffer().apply { write(bytes) }, out, Int.MAX_VALUE)
++            }
++            assertFalse('�' in out, "case $index must not substitute a replacement character")
++        }
++    }
++
++    // ---- split sequences: hold back the tail, never half-decode -----------------------------------
++
++    /**
++     * iconv answers EINVAL for a trailing partial sequence and consumes nothing, leaving the caller to
++     * bring more bytes. When there are no more bytes the decoder has to say so rather than emit half a
++     * character, so a truncated tail at the end of input is an error and not a silent truncation.
++     */
++    @Test
++    fun rejectsATruncatedSequenceAtTheEndOfInput() {
++        val truncations = listOf(
++            "abé".encodeToByteArray().dropLast(1), // two-byte character missing its tail
++            "ab€".encodeToByteArray().dropLast(1), // three-byte, one byte short
++            "ab€".encodeToByteArray().dropLast(2), // three-byte, two bytes short
++            "ab😀".encodeToByteArray().dropLast(1), // four-byte, one byte short
++        )
++        for ((index, bytes) in truncations.withIndex()) {
++            assertFailsWith<MalformedInputException>("truncation $index") {
++                Charsets.UTF_8.newDecoder()
++                    .decode(Buffer().apply { write(bytes.toByteArray()) }, StringBuilder(), Int.MAX_VALUE)
++            }
++        }
++    }
++
++    /**
++     * `max` is documented as the maximum number of BYTES to decode, and it can land inside a
++     * multi-byte character. Then there is no whole character left inside the budget, and the decoder
++     * stops: it neither decodes half a character nor reports an error, because the input is fine.
++     *
++     * THIS IS THE ONE PLACE THE REPLACEMENT DOES NOT REPRODUCE ICONV, and it is deliberate. Measured
++     * on the iconv implementation, this same call returns "abécd" and 6: iconv is handed the whole
++     * segment and `max` is only consulted between segments, so a byte budget shorter than a segment
++     * does not bound the result at all — whether or not it lands inside a character. Honouring the
++     * documented contract seemed better than reproducing that; if you would rather keep it
++     * bug-for-bug, this and the test below are the two to invert.
++     */
++    @Test
++    fun aByteBudgetThatEndsInsideACharacterStopsWithoutFailing() {
++        val text = "abécd" // 'é' occupies bytes 2 and 3
++        val source = Buffer().apply { write(text.encodeToByteArray()) }
++        val out = StringBuilder()
++
++        val consumed = Charsets.UTF_8.newDecoder().decode(source, out, max = 3)
++
++        assertEquals("ab", out.toString(), "half of 'é' must not be decoded")
++        assertEquals(2, consumed, "only the bytes of whole characters count as consumed")
++    }
++
++    /**
++     * A budget that falls exactly on a character boundary — and iconv does not honour this one either.
++     * Measured: `max = 4` on the same input also returns `abécd` and 6, so iconv ignores the budget
++     * within a segment altogether, not merely when it lands inside a character. The replacement
++     * honours it in both cases.
++     */
++    @Test
++    fun aByteBudgetOnACharacterBoundaryConsumesExactlyThatMuch() {
++        val source = Buffer().apply { write("abécd".encodeToByteArray()) }
++        val out = StringBuilder()
++
++        val consumed = Charsets.UTF_8.newDecoder().decode(source, out, max = 4)
++
++        assertEquals("abé", out.toString())
++        assertEquals(4, consumed)
++    }
++
++    // ---- unmappable output ------------------------------------------------------------------------
++
++    /** ISO-8859-1 holds 256 code points; anything above that is an error, not a `?`. */
++    @Test
++    fun refusesACharacterIso88591CannotRepresent() {
++        assertFailsWith<MalformedInputException> {
++            Charsets.ISO_8859_1.newEncoder().encodeToByteArray("café €", 0, 6)
++        }
++    }
++
++    /** And the 256 it does hold are all encodable, so the check above is not over-eager. */
++    @Test
++    fun acceptsTheHighestCharacterIso88591CanRepresent() {
++        val encoded = Charsets.ISO_8859_1.newEncoder().encodeToByteArray("ÿ", 0, 1)
++        assertEquals(1, encoded.size)
++        assertEquals(0xFF, encoded[0].toInt() and 0xFF)
++    }
++
++    // ---- unpaired surrogates on the ENCODE path --------------------------------------------------
++
++    /**
++     * `String.encodeToByteArray()` replaces an unpaired surrogate with U+FFFD unless asked not to,
++     * which would be a silent behaviour change: measured on 3.5.2, the iconv path throws here.
++     * Reachable from ordinary code — a substring that cut a surrogate pair in half.
++     */
++    @Test
++    fun rejectsAnUnpairedSurrogateRatherThanSubstituting() {
++        for (input in listOf("a\uD800b", "a\uDC00b", "\uD83D", "x\uDE00")) {
++            assertFailsWith<MalformedInputException>("input=$input") {
++                Charsets.UTF_8.newEncoder().encodeToByteArray(input, 0, input.length)
++            }
++        }
++    }
++
++    /** A properly paired surrogate is not affected, so the check above is not over-eager. */
++    @Test
++    fun encodesAProperlyPairedSurrogate() {
++        val encoded = Charsets.UTF_8.newEncoder().encodeToByteArray("a\uD83D\uDE00b", 0, 4)
++        assertEquals("a\uD83D\uDE00b".encodeToByteArray().toList(), encoded.toList())
++    }
++}

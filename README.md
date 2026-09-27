@@ -82,9 +82,10 @@ override.
   Examined and not patched: the mechanism is reproduced, but a service on 16 KiB pages gains about 5 %
   from the fix. See [`research/kt-89365/`](research/kt-89365/); `fixedBlockPageSize=16` is the
   workaround.
-- **`scratch` without gconv.** Ktor's charsets on Kotlin/Native are glibc `iconv`, which `dlopen`s
-  gconv modules even for UTF-8; a static Ktor service still needs them in the image. A `ktor-io` that
-  does UTF-8 itself would be a separate artifact on Ktor's release cadence, and does not exist.
+- **gconv.** Ktor's charsets on Kotlin/Native are glibc `iconv`, which `dlopen`s gconv modules even
+  for UTF-8, so a static Ktor service in `scratch` fails on its first charset conversion. The
+  distribution does not change that; [`iconv/`](iconv/) does, as a separate library: `iconv` for
+  UTF-8, UTF-16LE/BE, ISO-8859-1 and US-ASCII without gconv, linked in by one dependency.
 - **Debug and test binaries** are not checked separately; the checks link release executables.
 
 ## Building, checking, publishing

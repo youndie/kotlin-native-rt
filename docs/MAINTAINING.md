@@ -17,6 +17,7 @@ that went red is the patch or the build. A consumer needs only the [README](../R
 | `scripts/publish.sh` | uploads a version and reads it back through the URL a consumer uses |
 | `consumer-check/` | the smallest consumer; `run.sh` and `static.sh` are the checks a version has to pass |
 | `acceptance/` | the pause measurement against stock, and its logs |
+| `iconv/` | iconv-unicode, a separate library: `iconv` without gconv for static executables; its own [README](../iconv/README.md) and checks |
 | `research/` | what was examined and not taken into the series |
 | `.github/workflows/publish.yml` | all of the above, in CI |
 

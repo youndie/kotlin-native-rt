@@ -1,0 +1,31 @@
+# iconv-unicode: the replacement against glibc, and a static ktor-io executable in an empty image.
+# ktor-io's own suite (iconv/test/ktor-io-suite.sh) builds Ktor and is run by hand.
+name: iconv
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: The replacement against glibc's iconv
+        working-directory: iconv
+        run: |
+          gcc -O2 -Wall -Wextra -Werror -o differential test/differential.c src/iconv_unicode.c \
+            -Wl,--wrap=iconv_open,--wrap=iconv,--wrap=iconv_close
+          ./differential 20000000
+
+      - name: A static ktor-io executable in an empty image, with and without the library
+        run: iconv/check/check.sh

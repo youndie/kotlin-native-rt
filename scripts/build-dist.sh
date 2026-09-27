@@ -57,6 +57,12 @@ else
 echo "== patched: $(tr '\n' ' ' < "$SERIES/series")"
 while read -r p; do [ -n "$p" ] && git -C "$SRC" apply "$SERIES/$p"; done < "$SERIES/series"
 rebuild "$WORK/patched"
+# The runtime's own tests for the allocator, on the patched sources (scripts/alloc_tests.py builds the
+# custom_alloc_test group the way JetBrains' build does). The series carries a test of its own
+# (HeapFreesEmptyPagesAfterThePause), because the stock tests pass with the frees removed altogether.
+echo "== the allocator's tests on the patched sources"
+KOTLIN_SRC=$SRC KONAN_DIST=$STOCK OUT=$WORK/tests python3 "$ROOT/scripts/alloc_tests.py" \
+  || { echo "the allocator's tests fail on the patched sources"; exit 5; }
 restore
 changed=$(grep '^DIFF' "$WORK/patched.log" | awk '{print $2}' | sort | tr '\n' ' ')
 echo "modules that differ from stock: ${changed:-none}"

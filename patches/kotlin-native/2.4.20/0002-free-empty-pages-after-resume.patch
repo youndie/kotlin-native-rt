@@ -14,6 +14,36 @@ diff -ruN a/kotlin-native/runtime/src/alloc/custom/cpp/Heap.cpp b/kotlin-native/
      FinalizerQueue finalizerQueue;
      CustomAllocDebug("Heap: before sweep FinalizerQueue size == %zu", finalizerQueue.size());
      CustomAllocDebug("Heap::Sweep()");
+diff -ruN a/kotlin-native/runtime/src/alloc/custom/cpp/HeapTest.cpp b/kotlin-native/runtime/src/alloc/custom/cpp/HeapTest.cpp
+--- a/kotlin-native/runtime/src/alloc/custom/cpp/HeapTest.cpp
++++ b/kotlin-native/runtime/src/alloc/custom/cpp/HeapTest.cpp
+@@ -103,4 +103,26 @@
+     EXPECT_THAT(foundExtraObjects, testing::ElementsAreArray(allocatedExtraObjects));
+ }
+ 
++// The end-of-marking pause detaches the empty pages and the sweep after it destroys them: a page the
++// previous sweep emptied is still mapped when PrepareForGC returns, and unmapped once Sweep has run.
++TEST_F(CustomAllocatorTest, HeapFreesEmptyPagesAfterThePause) {
++    Heap heap;
++    const int blocks = MIN_BLOCK_SIZE;
++    TypeInfo fakeType{};
++    fakeType.typeInfo_ = &fakeType;
++    fakeType.instanceSize_ = 8 * (blocks - 1);
++    fakeType.flags_ = 0;
++    FixedBlockPage* page = heap.GetFixedBlockPage(blocks, finalizerQueue());
++    installType(page->TryAllocate(), &fakeType); // not marked: it dies in the first sweep
++    heap.PrepareForGC();
++    heap.Sweep(gcHandle()); // the page is empty now
++    const size_t mapped = kotlin::alloc::GetAllocatedBytes();
++
++    heap.PrepareForGC();
++    EXPECT_EQ(mapped, kotlin::alloc::GetAllocatedBytes()) << "an empty page was destroyed inside the pause";
++    heap.Sweep(gcHandle());
++    EXPECT_EQ(mapped - FixedBlockPage::SIZE(), kotlin::alloc::GetAllocatedBytes())
++            << "the detached page was not destroyed by the sweep after the pause";
++}
++
+ } // namespace
 diff -ruN a/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp b/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp
 --- a/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp
 +++ b/kotlin-native/runtime/src/alloc/custom/cpp/PageStore.hpp

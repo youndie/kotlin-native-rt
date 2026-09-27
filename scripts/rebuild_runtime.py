@@ -87,21 +87,22 @@ def build(name, root, heads):
 
 def md5(p): return hashlib.md5(pathlib.Path(p).read_bytes()).hexdigest()
 
-os.makedirs(OUT, exist_ok=True)
-mods = modules()
-shipped = sorted(p.stem for p in pathlib.Path(SHIPPED).glob("*.bc"))
-print(f"{len(shipped)} modules ship for linux_x64; the build file declares {len(mods)}\n")
-same, diff, skip = [], [], []
-for s in shipped:
-    name = "main" if s == "runtime" else s
-    if name not in mods:
-        skip.append((s, "not declared in build.gradle.kts under this name")); continue
-    root, heads = mods[name]
-    err, out = build(name, root, heads)
-    if err:
-        skip.append((s, err)); continue
-    a, b = md5(out), md5(f"{SHIPPED}/{s}.bc")
-    (same if a == b else diff).append((s, a, b, os.path.getsize(out), os.path.getsize(f"{SHIPPED}/{s}.bc")))
-    print(("OK   " if a == b else "DIFF ") + f"{s:28} {a[:12]} vs {b[:12]}")
-print(f"\nidentical {len(same)}, different {len(diff)}, not built {len(skip)}")
-for s, why in skip: print(f"  skip {s:28} {why}")
+if __name__ == "__main__":
+    os.makedirs(OUT, exist_ok=True)
+    mods = modules()
+    shipped = sorted(p.stem for p in pathlib.Path(SHIPPED).glob("*.bc"))
+    print(f"{len(shipped)} modules ship for linux_x64; the build file declares {len(mods)}\n")
+    same, diff, skip = [], [], []
+    for s in shipped:
+        name = "main" if s == "runtime" else s
+        if name not in mods:
+            skip.append((s, "not declared in build.gradle.kts under this name")); continue
+        root, heads = mods[name]
+        err, out = build(name, root, heads)
+        if err:
+            skip.append((s, err)); continue
+        a, b = md5(out), md5(f"{SHIPPED}/{s}.bc")
+        (same if a == b else diff).append((s, a, b, os.path.getsize(out), os.path.getsize(f"{SHIPPED}/{s}.bc")))
+        print(("OK   " if a == b else "DIFF ") + f"{s:28} {a[:12]} vs {b[:12]}")
+    print(f"\nidentical {len(same)}, different {len(diff)}, not built {len(skip)}")
+    for s, why in skip: print(f"  skip {s:28} {why}")

@@ -1,0 +1,77 @@
+# Build a patched distribution, check it, and publish it to reposilite.
+#
+#   git tag kn-2.4.20-yrt.1 && git push origin kn-2.4.20-yrt.1     builds, checks and publishes
+#   Actions > publish > Run workflow (kotlin, n)                    builds and checks, publishes nothing
+#
+# Everything a version has to pass before it is uploaded runs here, in this order, and any failure
+# stops the job: the stock sources rebuild into the shipped runtime byte for byte; the series changes
+# exactly the modules in `modules`; the allocator's tests pass on the patched sources; a consumer linked
+# against the patched build differs from stock, and against the unpatched yrt.0 control does not.
+name: publish
+
+on:
+  push:
+    tags: ['kn-*-yrt.*']
+  workflow_dispatch:
+    inputs:
+      kotlin:
+        description: Kotlin version the series is for, e.g. 2.4.20
+        required: true
+      n:
+        description: rt number (1, 2, ...); never 0 - that is the control
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: The version
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            v=${GITHUB_REF_NAME#kn-}; KV=${v%-yrt.*}; N=${v##*-yrt.}; PUBLISH=true
+          else
+            KV=${{ inputs.kotlin }}; N=${{ inputs.n }}; PUBLISH=false
+          fi
+          [ "$N" != 0 ] || { echo "::error::rt number 0 is the control and is never published"; exit 1; }
+          echo "KV=$KV" >> "$GITHUB_ENV"; echo "N=$N" >> "$GITHUB_ENV"; echo "PUBLISH=$PUBLISH" >> "$GITHUB_ENV"
+          echo "building $KV-yrt.$N, publish=$PUBLISH"
+
+      # The stock distribution and its dependencies come the ordinary way, through the Gradle plugin,
+      # plus the dev LLVM bundle the runtime is compiled with.
+      - name: Provision the stock toolchain
+        run: consumer-check/gradlew -p consumer-check --no-daemon -q -Pkotlin.native.version=$KV -Prt.llvmVariant=dev linkReleaseExecutableLinuxX64
+
+      - name: The Kotlin sources the series applies to
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 --filter=blob:none --sparse --branch "v$KV" https://github.com/JetBrains/kotlin.git ~/kotlin-src
+          git -C ~/kotlin-src sparse-checkout set kotlin-native/runtime
+          git -C ~/kotlin-src rev-parse "v$KV^{commit}"
+
+      - name: The control build (yrt.0), never published
+        run: scripts/build-dist.sh "$KV" 0
+
+      - name: The patched build
+        run: scripts/build-dist.sh "$KV" "$N"
+
+      - name: A consumer gets the patched runtime, and only the runtime
+        run: |
+          set -euo pipefail
+          consumer-check/run.sh "$KV" "$KV-yrt.$N" "file://$PWD/build/out"
+          consumer-check/run.sh "$KV" "$KV-yrt.0" "file://$PWD/build/out"
+
+      - name: Publish
+        if: env.PUBLISH == 'true'
+        env:
+          REPOSILITE_USER: ${{ secrets.REPOSILITE_USER }}
+          REPOSILITE_SECRET: ${{ secrets.REPOSILITE_SECRET }}
+        run: scripts/publish.sh "$KV-yrt.$N"
